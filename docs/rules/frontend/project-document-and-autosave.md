@@ -23,7 +23,26 @@ order: 200
   运行时激活画布仍是 schema 2 形状的 `documentStore.doc`（画布编辑代码零改动），
   持久化/读档统一走 `migrateToProject()`（接受 2/3/4）。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
-  标签页 openTabs 按 documentId 存本机。后端 versions/package 接受 schema 2/3。
+  标签页 openTabs 按 documentId 存本机。legacy缺省仍保存schema3，v4显式保存schema4；versions按所选格式隔离，包安装另行验收，不能借旧package入口读写v4。
+- **计算项目格式（ADR 0182）**：只有一个documentStore和对象模型，运行时`documentFormat: legacy | v4`，格式闭集消费后端`engine/documentformat.py`。首次出现`chart`或`chartSource`字段（包括坏状态）经同一入口升级为新working documentId，保留当前画布/对象身份、编辑及undo，不覆盖旧文件；事务内首次出现先延迟到成功结束，取消不升级。撤销计算编辑不把v4降回legacy。API路径、本机缓存、revision、owner、保存队列和projectFile键均消费`lib/documentFormat.ts`；省略格式参数时旧URL/键/调用形状不变。
+- **计算项目包导出**：沿原TopBar项目菜单入口，完整深拷贝所有画布/附件/原序编辑。createPackage旧三参保持旧wire，显式v4固定pj并走真实v4端点，必须收到document_format='v4'，不降回旧接口。项目/格式/workingId/loadSeq/操作序任一变化后丢弃迟到成功或错误状态；v4 missing非空准确提示包已生成但需补齐资源，旧状态不改。不复用旧relink处理计算附件，也不把导出当作安装。看护`lib/packageApi.test.ts`、`components/topBarPackageExport.test.tsx`。
+  v4响应有`execution_coverage=incomplete`时说明运行依赖未确认；与已知缺素材分别或合并提示，不把未知依赖算作缺素材、不因missing为空暗示可完整运行。旧后端/普通无脚本包没有该事实时保持原消息；事实只由后端提供。
+- **计算项目包安装与采用**：TopBar与项目选择器的显式安装入口经`projectPackageInstallStore`协调原v4检视/安装API；
+  安装回执只证明资源与配置阶段，不能当作正文已保存。关闭/项目换代仅退休当前界面归属，保已收到的资源回执。
+  每次实际请求在await前分独立attemptId并记destination；网络/坏响应没有合法回执时保`completion_unknown`，
+  原入口可重看该路径，不假报已发布、不自动重装/打开/Run。合法迟到回执只晋升对应记录，显式查看后再打开。
+  旧稿经原writer保护后，初次采用只走原switchTransaction/adopt.prepareDocument/openDocumentAs；
+  非空稿等原一次AS写入及revision/正文回读，空稿明确persistEmpty一次，不补第二writer/PUT或named票据。
+  正文同步装入即记本次真实adopted scope；保存确认迟到或失败不等于未采用，重开不能重新套安装正文。
+  迟到的已核保存事实只晋升原scope的记录，不让已关闭窗口重新认领当前界面。
+  已保存的安装记录继续编辑时，同项目保当前稿与undo，跨项目沿原restore读目标最新稿，不能重套旧package正文；
+  取消/ABA只使本次精确恢复token失权，不撤销另一个项目的token。配置检查仅在已采用项目当前认领时打开原project设置。
+  看护：`lib/projectPackageApi.test.ts`、`store/projectPackageInstallStore.test.ts`、
+  `components/ProjectPackageInstallDialog.test.tsx`及原`store/workingDocumentReceipt.test.ts`。
+- **附件保存回执**：`chart_sources`是五字段位置数组`{canvas_index,object_index,canvas_id,panel_id,chart_source}`。发送上下文捕获实际深拷贝正文、pj/workingId/loadSeq/format，响应只在同上下文按数组位置和原id核对后合入，并比较完整来源/模型/原序overrides/旧ref。重复位置整份拒合入；位置重排或请求后输入改变只跳过受影响项。不按可重复panelId建Map、不新增旧文档ID唯一约束。回执更新沿派生入口，不加undo、不触发循环autosave；正文成功但回执过期不伪造I/O失败。
+- **跨格式冷发现**：两格式的显式GET `include_open_intent=1`须得到同一snapshot，才依共享latest自动恢复；有界重读后仍混代、stale或不可用则沿恢复门needs_user，不能按at/mtime选新旧。所有格式的明确打开/repair共用一条发送队列；自动确认用repair，只确认/晋升现意图而不分新sequence，superseded/unconfirmed不假ack。旧3含计算字段升级fork只在成功安装且令牌仍当前时记新v4意图一次。备选项以(format,id)寻址，不合并同id不同格式。
+- **时间线**：仍只捕获并恢复当时活动画布；v4在持久化边界用单canvas项目封装，不从完整多画布项目猜一个覆盖当前画布。缺thumb按需获取该版本正文和校验附件回建PNG，列表草图不携带完整数据模型。命名文件绑定沿ADR0096/0108后端合同持久化，冷开从正式关联恢复，不能按标题猜目标；时间线正文、命名关联及项目包安装分别验收。
+  看护：`lib/documentFormat.test.ts`、`lib/documentFormatApi.test.ts`、`lib/documentFormatNamespaces.test.ts`、`lib/chartSourceReceipts.test.ts`、`store/documentFormatPersistence.test.ts`、`store/documentRestore.v4.test.ts`、`store/projectSave.v4.test.ts`、`lib/timelineCheckpoint.v4.test.ts`、`components/LayoutDialog.v4.test.tsx`、`components/VersionDialog.v4.test.tsx`。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
   （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，
   负载可能出自升级前的标签页）都经
@@ -145,7 +164,8 @@ order: 200
 - **保存关联与明确冲突恢复**：`projectFileSession`每个活跃编辑器用独立内存actor；只有真实用户编辑推进轴，派生回执不推进。初次打开先在hydrate屏障捕获无编辑基线/票据，等候期间的用户编辑仍保dirty；named正文成功但元信息未确认只补confirm，不重写旧正文。绑定代次和`loadSeq`参与上下文，A→B→A或同ID重装挡旧回包；冷恢复不读取新的named revision洗白外改。后端wire唯一合同见[文档落盘规则](../backend/layout-versions-and-documents.md)。
   只有用户明确覆盖/重载才创建新branch，并把观察到的实际AS修订与完整会话视图固定到同一个`DiskSaveContext`，排入原writer；普通队列或重试不能刷新这份证明。读取、确认和落账守项目/格式/workingId/loadSeq/绑定及操作意图。重载安装前把**最新内存稿**写入原本机副本并提升原恢复槽；任一步失败停止安装、保留内存与磁盘，此不变量也适用于404兼容路径。看护`lib/projectFileSession.test.ts`、`lib/projectFileApi.test.ts`、`lib/autosave/diskWriter.projectFileRecovery.test.ts`、`store/projectFilePersistence.test.ts`和`components/documentBanner.test.tsx`。
 - **实际工作副本回执**：`waitForWorkingDocumentSave`只等待原writer并回读实际AS修订/正文，核项目/格式/workingId/loadSeq与已成功capture；它和named保存共用同一回执读取器，不预留named票据。非空安装稿不补写第二次PUT；只有明确`persistEmpty:true`才为本安装尚无成功记录的空稿排一次原writer写入，普通空稿保存语义不变。`openDocumentAs`成功或空稿`wrote:true`均不能代替真实落盘回执；失败/旧记录/外改/元信息未确认不能报告安装完成。看护`store/workingDocumentReceipt.test.ts`；该叶子不表示项目包安装入口已接通。
-  **重开同一个项目文件沿用 documentId**（QA-WIN-46，ADR 0096 修订 2026-11-04）：`openLayoutDocument` 带项目文件绑定时，`findDocumentsForProjectFile` 按最近绑定排序，取第一个没在别的窗口开着（`isDocHeldElsewhere`）、且不 `dirty` 的 documentId 沿用（版本时间线按 documentId 分存，新建身份会让命名节点看不到），并 `adoptSlotBaseline` 记下旧槽位的磁盘基线免得首次自动保存误报外部修改；`dirty` 的旧绑定不沿用（槽位里有项目文件没有的编辑）；另存为把当前排版改绑新文件，原文件不再有绑定，副本不继承历史。看护 `store/openProjectFileIdentity.test.ts`。
+  **重开同一个项目文件沿用 documentId**（QA-WIN-46，ADR 0096 修订 2026-11-04）：`openLayoutDocument` 带项目文件绑定时，`findDocumentsForProjectFile` 按最近绑定排序，取第一个没在别的窗口开着（`isDocHeldElsewhere`）、且不 `dirty` 的 documentId 沿用（版本时间线按 documentId 分存，新建身份会让命名节点看不到），并 `adoptSlotBaseline` 记下旧槽位的磁盘基线免得首次自动保存误报外部修改；`dirty` 的旧绑定不沿用（槽位里有项目文件没有的编辑）；另存为是**真分叉**（ADR 0181）：写好命名文件后换成一份新排版（新 documentId，`store/documentFork.ts` 的 `installFork`），绑定记在新排版名下，原排版与它的绑定、自动保存槽位一个字节不动，历史不继承。看护 `store/openProjectFileIdentity.test.ts`、`store/documentFork.test.ts`。
+  **同一份排版在两个窗口开着**（ADR 0181，`store/docWindow.ts` + `lib/docPresence.ts`）：后开的窗口只读（`documentStore.windowHold`：写入口的门 + `suspendAutosaveFor`，换文档即清），画布中间的 `DocWindowCard` 选「在这里编辑」（接管：持有方存好并让出，这边 `reloadFromDisk({ keepMine })` 载入最新版）或「存成副本」；用户动了手的入口经 `deferUserEntry` 记在 `heldWindow`，选完执行，选择方必须在放开编辑权**之前** `takeWindowEntries()`（放开时没被取走的会被丢掉）。presence 协议加消息兼容旧标签页（不认识就不回、请求方按超时接管）。看护 `store/docWindow.test.ts`。
 - **显式运行完成与恢复门（SVG 快照）**：`figureSnapshotInvalidation` 只接收入口已按项目代际接受的成功执行事实；
   尚未接纳的旧回包仍由原入口拒绝。恢复中 / 待用户处理、以及尚未真正初始化的 `initial-ready` 窗口内，
   只保留匹配来源所需的最小字段，按稳定项目 id + source / runtime asset id 覆盖去重，不保留报告或参数。

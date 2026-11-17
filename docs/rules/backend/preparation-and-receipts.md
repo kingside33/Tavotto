@@ -4,8 +4,8 @@
 > （ADR 0070 / 0071）扩到「自报只收这一条会话的」/ 输入观察 / 数据绑定 / 旧计划失效政策 / 阶段轨迹；速查行在
 > `src/tavotto/AGENTS.md`「按改动路径找细则」表里（`engine/preparation.py` / `receipt.py` 那一行）。
 > 这里是这一主题规则的**唯一全文**；速查表只留一行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_execution_receipt.py`、`test_preparation_api.py`、`test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、`tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、`tests/test_foundation_join.py`、`tests/test_preparation_session.py`、`tests/test_preparation_session_e2e.py`、`tests/test_preparation_session_dependencies.py`、`tests/test_dialogscan.py`
-> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`databinding.binding_for`、`figcapture.InputObserver`、`execspec.launch_context`、`workdir.grant_for`、`depresolve.DependencyIntent`、`figcapture.SourceArtifact`、`exportreq.render_plan_ref`、`/api/engine/preparation*`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_execution_receipt.py`、`test_preparation_api.py`、`test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、`tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、`tests/test_foundation_join.py`、`tests/test_preparation_session.py`、`tests/test_preparation_session_e2e.py`、`tests/test_preparation_session_dependencies.py`、`tests/test_dialogscan.py`、`tests/test_libmodule.py`
+> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`libmodule.py`、`receipt.py`、`trace.py`、`databinding.binding_for`、`figcapture.InputObserver`、`execspec.launch_context`、`workdir.grant_for`、`depresolve.DependencyIntent`、`figcapture.SourceArtifact`、`exportreq.render_plan_ref`、`/api/engine/preparation*`
 > `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：准备计划、执行回执与源图产物（ADR 0053 / 0057 / 0070 / 0071）、准备会话（T01） → `preparation-and-receipts.md`
 
 <!-- agents-route
@@ -34,7 +34,15 @@ order: 320
   的选项；有写法只能落到通用报错、误导文案或「请手动改」，就是产品把路堵上了。为什么：四份用户反馈两天里暴露
   同一形状：直接读 argv 的脚本拿不到补参入口（#1805）；先检查再 raise 的脚本按 ADR 0106 旧线「探路救不回」，AI
   与用户指认都接不上（#1821）；只复制现成图片的脚本被说成「多半数据没找到」并推荐 AI 修复（#1823）；转换校验
-  只看出图，Python 版漏写原脚本的 Excel 也算成功（#1825）。
+  只看出图，Python 版漏写原脚本的 Excel 也算成功（#1825）。2026-11-14 两份用户反馈又是这一形状：参数都有默认值、
+  脚本解析后自己 `parser.error` 报找不到数据，被认成「需要参数」引去填参数（#1899）；stat / getsize / listdir 落空
+  直接到终局的写法认领不到，能救回却到不了指认（#1909）——用例都只覆盖了其中一种写法。2026-11-16 一份用户反馈：只定义了画图函数的
+  库模块被直接打开运行，跑完笼统说「没出图」并推荐 AI 修复——用例只放会画图的脚本，没有一条把「本来就不是入口的文件」放进打开并运行；
+  修复初版又在运行意图被授权边界撤销后让库模块卡盖住安装确认卡，评审报 P1（#1940）。
+- **只定义了画图函数的库模块是不阻塞的提示，不是拦截（ADR 0188，TVD-Y5JF）**：`libmodule.is_library` 与产品挑入口共用
+  `discover.entry_candidates_of` / `_toplevel_reaches_plot`，判不出就不说；`requirements_of` 多一条 `library_module`（`blocking: false`），
+  phase / `derive` / 动作都不动，没出图的终局 `remedy` 为空。反查往项目外只读源码，以仓库标记为界、不到主目录与盘符根，只经
+  `discover._iter_py` + `scanbudget.read_regular_text(no_follow=True)` + `importscan.scan` 的正向解析；项目外入口的路径只进 requirement 载荷。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。
@@ -374,6 +382,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - **只在会话 `run` / `run_when_ready` 认领之后**：CLI（`runcli`）与 MCP 不 import `execpolicy` / `prepsession`（`tests/test_execution_policy.py` 钉）；旧 `/api/engine/preparation` 不回退；前端永不发 `execution`。
 - **显式 `execution: "native"` 与路由 native 同一道来源闸门**：非桌面来源（浏览器 cookie / 本机凭据 API 客户端 / 无认证入口）显式要 native → 403 `native_requires_desktop`，不降级（客户端明确要求，换语义会误导）；创建会话端点（`app.api_engine_preparation_session_create`）先拒，`prepsession._claim_run` 认领时再核一次（含 `run_when_ready` 推进）。路由 native 在非桌面来源仍静默降 safe 并记 `declined: not_desktop_initiated`。`tests/test_explicit_native_origin_gate.py` 钉。
 - **safe 被拦先换入口（ADR 0127 修订 2026-10-30）**：`prepsession._plan_entry_retry` 复用 `probe.entry_candidates(static_only=True)` / `entry_retry_allowed`（只取静态可解析的出图入口、不盲试），每次运行至多换一次，成功当正常成功；仍被拦才走 native 回退 / 确认卡。与回退共用 `RetryGuard`，总执行次数上限 `execpolicy.MAX_ATTEMPTS_PER_RUN`（3）。`tests/test_entry_retry_session.py` 钉。
+- **MCP 来源（ADR 0127 修订 2026-11-17）**：`decide_fallback(mcp_initiated=True)` 只由 MCP 桥在自己进程里打开图时经 `engine/nativefallback.py` 传入；`app.py` / `prepsession.py` 一处都不许出现它（`tests/test_execution_policy.py` 钉）。MCP 不经准备会话，接线全文在 `docs/rules/plugin/sessions-and-batch-open.md`。
 - **浏览器模式的显式确认（ADR 0127 修订 2026-10-30，#1500）**：非桌面来源 safe 被守卫拦下、账本记 `declined: not_desktop_initiated` 时，`_sync_actions` 发 `confirm_native_run`（`_native_confirm_offered`；只用安全运行 / 开关关 / 本次运行已回退过都不发），失败卡 `remedy = switch_native{silent:false}` 优先于 AI 修复。认领 `SESSIONS.act(page_confirmed=, confirm_token=)`：**只认会话 cookie**（`app._page_authenticated()`：cookie 有效且不带本机凭据头，无会话状态 fail closed，403 `native_confirm_requires_page`）+ 服务端为那次失败尝试签发的一次性 token（绑尝试、`hmac.compare_digest`、验证即废、**只随页面认证的报告交出**，403 `native_confirm_invalid`）；通过后走与桌面回退同一套 `_plan_fallback` / `_start_fallback`（`confirmed=True` → `decide_fallback(user_confirmed=True)` 只顶替来源判据，其余闸门不少，同一本账至多一次）。不写 `nativeperm`、不改 `execution_policy`。`page_confirmed` / `user_confirmed` 为真只许由 `app` 的会话动作端点传入（`tests/test_native_confirm_browser.py` 的 AST 扫描钉），MCP / CLI / `engine/fixtools/` 不碰。显式 `execution:"native"` 的 403 不变，这是唯一例外。
 - **解释器沿用 safe 当时那一个**；native 计划算出的解释器 / 源码修订 / 检查项与 safe 当时不一致 → 不回退，闭集理由进 `attempt_history[].declined`。
 - **账本**：`Session.ledger`（有界 16、线程安全、按 run 分组，新的用户运行重算预算）；`attempt_history` 每条 = run · seq · attempt_id · profile · interpreter / launch 摘要 · cause · changed ∈ {profile, interpreter, launch_context} · outcome · code · declined。**无路径 / argv / env 值**。回退不是意图步数（`intent.attempts` 记名下全部尝试）。

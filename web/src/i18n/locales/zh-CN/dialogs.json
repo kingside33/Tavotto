@@ -188,6 +188,7 @@
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "batchNames": "每张图用各自的名字",
     "exportAgain": "再次导出",
+    "newerObjects_other": "有 {{count}} 个对象来自更新的版本，更新后才能导出",
     "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",
@@ -735,6 +736,7 @@
     "title": "科研预设"
   },
   "profiles": {
+    "journalBaseOutputName": "期刊检查基础",
     "useForCanvas": "用于当前画布",
     "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
     "binding": {
@@ -1923,6 +1925,22 @@
         "network": "连不上服务商。",
         "timeout": "连接超时。"
       },
+      "checkConnection": "检查连接",
+      "checking": "检查中",
+      "keyMissing": "请填写密钥",
+      "probeHint": "常见是地址少了 /v1，或者填成了网页地址",
+      "action": {
+        "refillKey": "重填密钥",
+        "switchAi": "换个 AI",
+        "editModel": "改模型",
+        "editAddress": "改地址"
+      },
+      "probe": {
+        "unauthorized": "密钥不对",
+        "quota": "额度用完了",
+        "no_model": "没有这个模型",
+        "unreachable": "连不上这个地址"
+      },
       "subtitle": "连接一个 AI，用于改图或修复环境。",
       "method": {
         "subscription": "订阅登录",
@@ -2463,6 +2481,14 @@
     "imageFailed": "有一张图没加载出来，没法对照，请选「保留原图」。"
   },
   "journal": {
+    "nanophotonicsUnknownWarning": "此期刊的分辨率来源未记录或无法识别；请核对当前指南和本项目实际生效设置。",
+    "nanophotonicsLegacyWarning": "保存的 Nanophotonics De Gruyter 分辨率来源可能已过时；该刊现由 Wiley 出版。请核对当前指南、图类条件及项目实际生效设置；此提示不归因具体问题。",
+    "nanophotonicsGuide": "查看 Wiley 作者指南",
+    "leukosScopeWarning": "此排版保存的历史来源针对终稿并区分图类；当前预检未区分投稿阶段和图类，现行要求未知，请核对期刊指南。",
+    "leukosProblemScopeWarning": "所列画布保存的历史来源针对终稿并区分图类；预检未区分投稿阶段和图类，现行要求未知。此提示不能确认任何问题或阈值来自该来源。",
+    "jperStageWarning": "此排版保存的来源对应历史录用稿最终版指南；当前预检未区分投稿阶段。当前要求尚未核实，请核对期刊指南。",
+    "jperProblemGeneralWarning": "所列画布保存的历史来源针对录用后最终稿；预检未区分投稿阶段，当前指南尚未核实。此提示不能确认任何问题或阈值来自该来源。",
+    "sourceIdentityWarning": "此排版保存的一个出处关联的历史采集文本页眉为 Adult，所选期刊为 Child；来源身份待核，请核对作者指南。现有预检规则未改变。",
     "title": "期刊",
     "pick": "选择期刊",
     "search": "搜索名称、缩写或 ISSN",
@@ -2472,8 +2498,11 @@
     "noMatch": "没有匹配的期刊",
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
-    "unspecified": "该期刊未规定",
+    "panelHistoricalNotice": "这是已保存的历史来源，涉及原则接收后的建议；现行要求未知，请核对期刊指南。",
+    "unspecified": "当前快照未记录",
     "hasRequirement": "有要求",
+    "strengthRequired": "必须",
+    "strengthRecommended": "建议",
     "unset": "本刊不适用",
     "noJournal": "不按期刊",
     "cleared": "已不按期刊检查",
@@ -2489,9 +2518,15 @@
     "picked": "已按「{{name}}」检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
-      "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
-      "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
-      "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
+      "adviceBoth": "字号记录，请参阅来源原文",
+      "adviceBody": "字号记录，请参阅来源原文",
+      "adviceScript": "字号记录，请参阅来源原文",
+      "coverage": {
+        "publisher": "此来源的范围标记：出版社通用。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "journal": "此来源的范围标记：期刊专属。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "sample": "此来源的范围标记：单刊样本。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "unknown": "来源范围和适用性未核实。"
+      },
       "open": "打开原网页",
       "archive": "存档",
       "aria": "出处"
@@ -2527,6 +2562,7 @@
       "info_width_range_double_mm": "双栏宽范围",
       "info_width_single_mm": "单栏宽（仅展示）",
       "info_width_double_mm": "双栏宽（仅展示）",
+      "info_panel_max_width_aip_mm": "图版最大宽（历史 AIP 建议）",
       "info_min_width_mm": "最小宽度",
       "info_min_line_width_pt": "最小线宽",
       "info_dpi_by_kind": "分辨率（按图类）",
@@ -2542,7 +2578,7 @@
     }
   },
   "packageInstall": {
-    "entry": "安装项目包到新目录…",
+    "importEntry": "导入项目包…",
     "title": "安装计算图表项目包",
     "description": "先检视资源，再安装到新项目；打开时保留原来的排版。",
     "inspecting": "正在检视项目包…",
@@ -2564,6 +2600,7 @@
     "newDirectory": "填写尚不存在的完整目录路径，已有文件不会被覆盖。",
     "missing_other": "包中缺少 {{count}} 个资源，请补齐后重新导出。",
     "dependencies": "运行依赖尚未全部确认；安装不会自动运行包内脚本。",
+    "remapRelink": "包内 Figure 快照来自另一台机器的数据改指表；打开项目后请重新找到这些图的原始文件，旧路径不会被沿用。",
     "installedAt": "资源已安装到",
     "documentPending": "排版正文的保存尚未确认。打开项目后将通过原保存流程写入工作副本。",
     "previous": "其他安装记录",
@@ -2572,5 +2609,76 @@
     "resultPending": "结果未确认",
     "receivedResult": "已收到这次安装的结果，可以查看后继续。",
     "viewResult": "查看安装结果"
+  },
+  "review": {
+    "button": "分享审阅",
+    "buttonUnread": "分享审阅（有新意见）",
+    "title": "分享审阅",
+    "create": "生成链接",
+    "cancel": "取消",
+    "close": "关闭",
+    "copy": "复制",
+    "linkCopied": "链接已复制",
+    "sharedMeta": "V{{v}} · {{when}}",
+    "stop": "停止分享",
+    "stopConfirm": "再点一次，立刻停止",
+    "linkLabel": "审阅链接",
+    "stage": {
+      "rendering": "正在生成画面…",
+      "uploading": "正在上传…"
+    },
+    "failure": {
+      "quota_new_exhausted": "今天新建的次数用完了。",
+      "share_gone": "这个链接已经失效了，本机留着当时的意见。",
+      "too_large": "画面太大了，缩小图幅后再试。",
+      "rate_limited": "请求太频繁，过一会儿再试。",
+      "network": "连不上审阅服务，检查网络后重试。",
+      "server": "审阅服务暂时出错了，稍后再试。",
+      "client_error": "没有成功，再试一次。",
+      "render_failed": "画面没生成出来，再试一次。"
+    },
+    "retry": "重试",
+    "picker": {
+      "newTitle": "今天已经新建过分享链接",
+      "exportPng": "导出 PNG",
+      "updateOne": "更新已有的链接（{{title}}）",
+      "desc": "每天可新建 1 个链接，北京时间 0 点恢复。",
+      "updateMany": "更新已有的链接…"
+    },
+    "tab": {
+      "label": "审阅",
+      "revoked": "已停止分享，意见留在本机",
+      "expired": "链接已过期，当时的意见留在这里",
+      "deleteRecord": "删除这份记录",
+      "filterLabel": "筛选意见",
+      "all": "全部 {{n}}",
+      "open": "未处理 {{n}}",
+      "empty": "还没有意见",
+      "emptyOpen": "没有未处理的意见"
+    },
+    "comment": {
+      "reply": "回复",
+      "replyPlaceholder": "回复…",
+      "send": "发送",
+      "resolve": "已处理",
+      "reopen": "重新打开",
+      "owner": "作者",
+      "moved": "原位置已变化",
+      "version": "V{{v}}",
+      "pin": "第 {{n}} 条意见",
+      "allMark": "全",
+      "done": "已处理"
+    },
+    "capsuleOpen": "查看",
+    "capsuleClose": "收起",
+    "notFound": "这张图不在当前项目里",
+    "capsule_other": "{{author}}留了 {{count}} 条意见",
+    "copyLink": "复制链接",
+    "changed": "画布有新改动",
+    "updateHere": "更新到这个链接",
+    "shareNote": "拿到链接可查看和留言 · {{date}}失效",
+    "privacyFoot": "只上传画面，脚本和数据不出本机",
+    "dailyNew": "每天可新建 1 个",
+    "notePlaceholder": "给审阅者的话（选填）…"
   }
 }

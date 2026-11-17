@@ -197,6 +197,10 @@ class V1Handler:
     def commands(self) -> frozenset:
         return V1_COMMANDS
 
+    def unbuilt_commands(self) -> frozenset:
+        """Fixed task commands that have no user-code build phase."""
+        return frozenset()
+
     def ensure_built(self, timings: dict | None = None) -> None:
         return None
 
@@ -273,6 +277,9 @@ class V1Handler:
         if cmd == "cancel":
             return self.cancel(payload)
 
+        if cmd in self.unbuilt_commands():
+            return self.handle_extra(cmd, req, payload)
+
         existing_command = {
             "render_existing": "render",
             "export_existing": "export",
@@ -318,7 +325,13 @@ class V1Handler:
                     "An already built Figure session is required for SVG capture.",
                 )
         else:
-            self.ensure_built(timings)
+            try:
+                self.ensure_built(timings)
+            except ProtocolError as exc:
+                # 脚本失败时它从项目外加载过的本地模块也带回去（诊断包「脚本源码」用；已有的键不覆盖）
+                for key, value in getattr(self, "external_module_facts", lambda: {})().items():
+                    exc.extra.setdefault(key, value)
+                raise
         if cmd == "build":
             return {**self.build_result(timings), "timings": timings}
         if cmd not in V1_COMMANDS:

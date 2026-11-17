@@ -5,6 +5,7 @@ import {
   BookOpen,
   ChevronRight,
   CornerDownLeft,
+  Download,
   ExternalLink,
   FolderOpen,
   FolderPlus,
@@ -12,7 +13,7 @@ import {
   TriangleAlert,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { backendErrorText, type RecentProject } from '@/lib/api'
+import { backendErrorText, type ProjectEntry, type RecentProject } from '@/lib/api'
 import { AppMenuButton } from './AppMenuButton'
 import { ContactButton } from './contact/ContactButton'
 import { useRovingList } from './left/rovingList'
@@ -33,6 +34,7 @@ import {
 } from '@/lib/onboarding/tutorial'
 import { disambiguateRecent, looksLikePath, splitRecent, submitTargetFor } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
+import { pickPackageFile } from '@/lib/packageImport'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { DirBrowser, NewProjectNameDialog, TailPath } from './DirBrowser'
@@ -62,11 +64,11 @@ export function ProjectPicker() {
   const [error, setError] = useState<string | null>(null)
   const [busyPath, setBusyPath] = useState<string | null>(null)
 
-  const openPath = async (path: string, create = false): Promise<boolean> => {
+  const openPath = async (path: string, create = false, entry?: ProjectEntry): Promise<boolean> => {
     setError(null)
     setBusyPath(path)
     try {
-      await open(path, create)
+      await (entry ? open(path, create, entry) : open(path, create))
       return true
     } catch (e) {
       setError(backendErrorText(e))
@@ -95,7 +97,7 @@ export function ProjectPicker() {
           variant={variant}
           error={error}
           busyPath={busyPath}
-          openPath={(path) => openPath(path)}
+          openPath={(path, entry) => openPath(path, false, entry)}
           onShowAll={() => {
             setError(null)
             setView('all')
@@ -144,7 +146,7 @@ function AllProjects({
 }: {
   error: string | null
   busyPath: string | null
-  openPath: (path: string, create?: boolean) => Promise<boolean>
+  openPath: (path: string, create?: boolean, entry?: ProjectEntry) => Promise<boolean>
   onBack: () => void
 }) {
   const { t } = useTranslation('project')
@@ -163,7 +165,8 @@ function AllProjects({
   const hints = useMemo(() => disambiguateRecent(recent), [recent])
   const target = submitTargetFor(typed, available)
   const pathMode = looksLikePath(typed)
-  const entry = useProjectEntry((path, create) => void openPath(path, create))
+  // 选目录 / 新建 = 明确打开整个文件夹（ADR 0184 §三）
+  const entry = useProjectEntry((path, create) => void openPath(path, create, { entry: 'folder' }))
   const roving = useRovingList<HTMLDivElement>()
   const listRef = roving.ref
 
@@ -269,6 +272,10 @@ function AllProjects({
                     <span className="max-[559px]:sr-only">{t('picker.create')}</span>
                   </Button>
                   <span aria-hidden className="h-4 w-px bg-border" />
+                  <Button size="md" className="text-ink-2" disabled={switching} data-install-project-package onClick={() => pickPackageFile()}>
+                    <Download size={ICON_SIZE.md} aria-hidden />
+                    <span className="max-[559px]:sr-only">{t('packageInstall.importEntry', { ns: 'dialogs' })}</span>
+                  </Button>
                   <Button size="md" className="text-ink-2" disabled={switching} onClick={entry.startOpen}>
                     <FolderOpen size={ICON_SIZE.md} aria-hidden />
                     <span className="max-[559px]:sr-only">{t('picker.browse')}</span>

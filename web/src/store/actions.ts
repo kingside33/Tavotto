@@ -1,5 +1,6 @@
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
+import { isCanvasCovered } from '@/store/canvasCover'
 import '@/store/figureSnapshotInvalidation'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
@@ -67,15 +68,17 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, isKnownObject, objectLabel, type ProjectDocument } from '@/types/document'
+import { emptyProject, isKnownObject, migrateToProject, objectLabel, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { vectorPrimaryFor } from '@/lib/figureGroup'
 import { useEnvStore } from './envStore'
 import {
+  activeProjectFile,
   adoptSlotBaseline,
   dropRecentEntry,
+  markProjectFileDirty,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -432,8 +435,39 @@ export function restorePanelOverrides(panelId: string, label: UiMessage, patches
   )
 }
 
-/** 布局版本恢复：当前画布的内容整份换成那一版（面板 overrides 的身份原样）。 */
-export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) {
+/**
+ * 布局版本恢复。按节点正文的 schema 分派（服务端从版本链里存的就是整份载荷）：
+ *
+ * - **schema 2**：单画布检查点，当前画布的内容整份换成那一版（面板 overrides 的身份
+ *   原样）。这条路径逐字保留，⌘Z 一步退回。
+ * - **schema 3 / 4**：整份项目节点（原地升级的备份原语产出）。经 `migrateToProject`
+ *   拿到 `ProjectDocument` 后 `switchDocument` 换进**同一个 documentId**——项目节点
+ *   的正文是多张画布，不能把 `version.objects` 当成当前画布的对象去 commit。
+ *   返回 false = 正文读不出来 / 换文档被取消，调用方不得说「已恢复」。
+ *
+ * 返回值可能是 Promise：schema 2 的 commit 同步完成，schema 3 / 4 要等 `switchDocument`。
+ */
+export function restoreLayoutVersion(
+  label: UiMessage,
+  version: FigureDocument | ProjectDocument,
+): boolean | Promise<boolean> {
+  if (version.schema !== 2) {
+    const pd = migrateToProject(version)
+    if (!pd) return false
+    // 恢复的是同一份排版：documentId 不变，时间线 / 最近文档 / 项目归属都跟着这份走
+    const docId = useDocumentStore.getState().documentId
+    return useDocumentStore.getState().switchDocument(pd, docId).then((ok) => {
+      // 换进来的正文与项目文件里那份不同了：绑定还在的话要标脏，否则 ⌘S 会以为
+      // 「已经存过」——恢复后的内容只在自动保存槽位里，项目文件还是旧的。
+      // 走 `markProjectFileDirty()`：它同时推进编辑代次，正在飞的项目文件保存
+      // 回来时 `projectFileSnapshot()` 才看得见这次变化，不会把 dirty 洗回 false。
+      // 等回来的这一下也可能已经换了排版：那就不碰新排版的绑定。
+      if (ok && useDocumentStore.getState().documentId === docId) {
+        if (activeProjectFile()) markProjectFileDirty()
+      }
+      return ok
+    })
+  }
   commit(
     label,
     (d) => {
@@ -449,6 +483,7 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
     },
     { overrides: 'restored' },
   )
+  return true
 }
 
 export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
@@ -489,6 +524,7 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
+  if (isCanvasCovered()) return // 画布被「数据」临时标签盖住：不改看不见的文档
   // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里。单图编辑里也允许（2026-10-21）：副本是一张图 =
   // 第二张图，画布变两张，模式订阅切到多图排版；副本是标注就留在单图编辑
   const ids = useSelectionStore.getState().ids

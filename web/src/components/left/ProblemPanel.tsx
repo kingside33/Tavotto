@@ -15,7 +15,7 @@ import { formatRelativeTime, listJoin } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { focusFailureMessage, focusIssue } from '@/lib/issueFocus'
 import { problemContextNow } from '@/lib/problemContext'
-import { profileName } from '@/lib/profileText'
+import { profileOutputName } from '@/lib/profileText'
 import {
   bucketsByCategory,
   bucketsByFigure,
@@ -46,6 +46,10 @@ import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
+import { JournalPicker } from '@/components/journal/JournalPicker'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { fieldBoxTrigger } from '@/components/ui/fieldBox'
+import { Row } from '@/components/ui/Field'
 import { Button, IconButton } from '../ui/Button'
 import { CountChip } from '../ui/CountChip'
 import { EmptyState } from '../ui/EmptyState'
@@ -64,8 +68,11 @@ import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
 import { runBatchFix, useBatchable } from './IssueFixButton'
 import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
-import { GroupNode } from './ProblemTreeRows'
+import { ConfirmEntry, GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
+import { JperProblemStageNotice } from './JperProblemStageNotice'
+import { LeukosProblemScopeNotice } from './LeukosProblemScopeNotice'
+import { NanophotonicsProblemNotice } from './NanophotonicsProblemNotice'
 
 
 /** 本组文案在 errors:problems.* 下（问题的措辞与检查项同一个命名空间） */
@@ -391,6 +398,8 @@ export function ProblemPanel() {
         <PanelMenu view={view} />
       </DrawerHeaderActions>
 
+      <JournalRow />
+
       {/* 摘要条只在这一轮结果就绪后出现：还在检查时挂着一条计数，与下面的骨架是两句打架的话 */}
       {ready && issues.length > 0 && (
         <section
@@ -458,7 +467,11 @@ export function ProblemPanel() {
            根本还没查过（T-54，PR #214 第六轮评审）。首检是静态骨架（加载四种写法之一）。 */
         <TreeSkeleton />
       ) : shown.length === 0 ? (
-        all.length === 0 ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <JperProblemStageNotice issues={shown} emptyScope={scope === 'document' ? 'document' : 'active'} />
+          <LeukosProblemScopeNotice issues={shown} emptyScope={scope === 'document' ? 'document' : 'active'} />
+          <NanophotonicsProblemNotice scope={scope === 'document' ? 'document' : 'active'} />
+        {all.length === 0 ? (
           /* 空态给证据：按哪套规范、查了几张图、什么时候——「没问题」得说得出凭什么 */
           <NoneEvidence />
         ) : issues.length === 0 ? (
@@ -480,7 +493,12 @@ export function ProblemPanel() {
             title={pr('noneInFilter')}
             action={{ label: pr('clearFilter'), onClick: () => useUiStore.getState().setProblemFilter(null) }}
           />
-        )
+        )}
+        {/* 没有问题时「需要你确认」照样要在：带文字条件的要求正是「检查没报、但你得看一眼」的那一类 */}
+        <ul>
+          <ConfirmEntry />
+        </ul>
+        </div>
       ) : (
         <ProblemTreeContext.Provider value={tree}>
           <ul
@@ -491,6 +509,9 @@ export function ProblemPanel() {
             aria-label={pr('listLabel')}
             className="min-h-0 flex-1 overflow-y-auto pb-2"
           >
+            <JperProblemStageNotice issues={shown} />
+            <LeukosProblemScopeNotice issues={shown} />
+            <NanophotonicsProblemNotice scope={scope === 'document' ? 'document' : 'active'} inTree />
             {single ? (
               <li data-problem-tier="actionable">
                 <ul>{tree.body(single, 0)}</ul>
@@ -501,12 +522,32 @@ export function ProblemPanel() {
               <CategoryCards categories={categories} />
             )}
             {unverifiable.length > 0 && <UnverifiableEntry issues={unverifiable} />}
+            <ConfirmEntry />
           </ul>
         </ProblemTreeContext.Provider>
       )}
 
       {open && cursor && groups.length > 0 && <CursorBar view={cursorAt} onStep={step} />}
       <ReadinessLink />
+    </div>
+  )
+}
+
+/**
+ * 顶部一行「期刊」：问题清单按哪套规范判，就在这一行看、这一行换（与设置里同一个选择器、同一条路：写当前画布的绑定，
+ * 一次提交、可撤销）。不是筛选——同一时刻只按一份规范判。固定在清单上方、不随清单滚动；任何状态（检查中 / 没问题 / 失败）下都在原位，
+ * 不跟着内容出没。占位文档（恢复门没开）与被另一窗口接管的只读排版：禁用。入口关着（`journalCatalogUi()` 假）整行不出现。
+ */
+function JournalRow() {
+  const { t } = useTranslation('dialogs')
+  const blocked = useDocumentStore((s) => s.restoreGate.state !== 'ready' || s.windowHold != null)
+  if (!journalCatalogUi()) return null
+  return (
+    <div data-issues-journal className="shrink-0 pl-3 pr-2 pt-1">
+      {/* 标签按文字宽：「期刊」与上一行的「问题」左对齐，下拉框的左缘落在上一行范围胶囊的左缘上 */}
+      <Row label={t('journal.title')} labelWidth="auto">
+        <JournalPicker anchor="data-issues-journal-picker" triggerClassName={fieldBoxTrigger} disabled={blocked} />
+      </Row>
     </div>
   )
 }
@@ -801,7 +842,7 @@ function NoneEvidence() {
     const nameOf = (binding: typeof activeBinding) => {
       const resolved = resolveDocumentSpec(binding, catalog)
       const record = resolved.profileId ? specs.find((r) => r.id === resolved.profileId) : undefined
-      return record ? profileName(record) : resolved.profile.label
+      return profileOutputName(resolved.profile, record)
     }
     let figures = 0
     const used: string[] = []

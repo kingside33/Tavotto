@@ -1,5 +1,5 @@
 import { visibleFigureCards } from '@/lib/figureGroup'
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { EmptyPickCards } from './EmptyPickCards'
 import { RestoreIssueBody } from '@/components/RestoreIssueBody'
 import { Card } from '@/components/ui/Card'
+import { useHasDataFiles } from '@/components/datastudio/useHasDataFiles'
 import { DocWindowCard } from '@/components/DocWindowCard'
 import { heldEntryCount, subscribeHeldEntries } from '@/store/documentRestore'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
@@ -16,7 +17,10 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useExactPanelManifest } from '@/store/renderStore'
 import { frameCanvasOf, isZeroPad } from '@/lib/framePad'
-import type { PanelObject } from '@/types/document'
+import type { CanvasObject, PanelObject } from '@/types/document'
+import { clipChainOf, groupMasks, inScope, isActiveMask } from '@/lib/groupTree'
+import { clipPathCss, maskOutline } from '@/lib/clipMask'
+import { useIsolationStore, validPath } from '@/store/isolationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -37,11 +41,17 @@ import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { PageOutsideMask } from './PageOutsideMask'
+import { QuickLayoutGutters } from './QuickLayoutGutters'
 import { FigureEdgeHandles, LayoutFramePreview, PageEdgeHandles } from './PageEdgeResize'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
+import { penHover, penPointerDown } from './penController'
+import { pencilPointerDown } from './pencilController'
+import { eyedropperPointerDown } from './eyedropper'
+import { startAnchorMarquee } from './pathEditDrag'
+import { activePathEdit } from '@/store/pathEditStore'
 import { groundInkFor } from '@/lib/canvasSelection'
 import { cn } from '@/lib/utils'
 
@@ -195,8 +205,28 @@ export function CanvasStage() {
       useUiStore.getState().setCropTarget(null)
       return
     }
+    // 钢笔（ADR 0185 M1）：加点 / 拉手柄 / 点起点闭合，状态机在 `lib/penTool`
+    if (tool === 'pen') {
+      penPointerDown(e)
+      return
+    }
+    // 铅笔（ADR 0185 M8）：拖一笔，松手拟合（`canvas/pencilController`）
+    if (tool === 'pencil') {
+      pencilPointerDown(e)
+      return
+    }
+    // 吸管：读点到的东西画出来的颜色，给选区上色（`canvas/eyedropper`）
+    if (tool === 'eyedropper') {
+      eyedropperPointerDown(e)
+      return
+    }
     if (tool !== 'select') {
       startDraw(e, tool)
+      return
+    }
+    // 锚点编辑里点空白：框选锚点（没拖 = 退出锚点编辑、清选区）
+    if (activePathEdit()) {
+      startAnchorMarquee(e)
       return
     }
     startMarquee(e)
@@ -206,6 +236,7 @@ export function CanvasStage() {
   const rafRef = useRef(0)
   const onPointerMove = (e: React.PointerEvent) => {
     const { clientX, clientY } = e
+    if (tool === 'pen') penHover(clientX, clientY, e.shiftKey)
     if (rafRef.current) return
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = 0
@@ -216,6 +247,11 @@ export function CanvasStage() {
   // 双击画布外侧灰色工作区 → 适应当前画布（对象/页面内容/各种编辑态不误触）
   const onDoubleClick = (e: React.MouseEvent) => {
     const ui = useUiStore.getState()
+    // 组内编辑时双击空白处 = 退出组内编辑（Illustrator 习惯），这一下不适应画布
+    if (useIsolationStore.getState().path.length && !(e.target as HTMLElement).closest('[data-object-id]')) {
+      useIsolationStore.getState().clear()
+      return
+    }
     const ok = shouldFitOnDoubleClick({
       tool,
       spaceDown,
@@ -345,6 +381,8 @@ export function CanvasStage() {
         {/* 拖页面四条边改画布大小：只在多图排版（单图编辑没有页面）；命中区在选框覆盖层之下 */}
         {layoutMode && <PageEdgeHandles />}
         {layoutMode && <LayoutFramePreview />}
+        {/* 一键排版之后的行 / 列分隔线（高级功能，没解锁不画）：拖动调比例 */}
+        {layoutMode && <QuickLayoutGutters />}
         {/* 单图编辑：直接拖这张图的四条边改图幅，手感与上面拖页面边一致 */}
         {fastEdit && <FigureEdgeHandles panelId={activePanelId} />}
 
@@ -454,6 +492,9 @@ function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number 
  */
 function CanvasLayers() {
   const objects = useDocumentStore((s) => s.doc.objects)
+  // 组内编辑（ADR 0191）：只对激活画布生效；链失效的部分不算
+  const isoPath = useIsolationStore((s) => s.path)
+  const isolation = useMemo(() => validPath(isoPath, objects).at(-1) ?? null, [isoPath, objects])
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
   const canvases = useDocumentStore((s) => s.canvases)
@@ -471,11 +512,52 @@ function CanvasLayers() {
             className="absolute left-0 top-0"
             style={active ? undefined : { display: 'none' }}
           >
-            {objs.map((o) => (
-              <ObjectView key={o.id} obj={o} />
-            ))}
+            <LayerObjects objects={objs} isolation={active ? isolation : null} />
           </div>
         )
+      })}
+    </>
+  )
+}
+
+/**
+ * 一张画布的对象（ADR 0191）：剪切组里生效的蒙版不画（只拿来裁），被裁的对象外面一层层包上
+ * `clip-path`（外层组的蒙版在外）。包裹层是贴在世界原点、零尺寸的 div，所以蒙版轮廓直接用世界坐标，
+ * 不管对象自己转没转；`clip-path` 同时裁掉命中，点不到被裁掉的那部分。组内编辑时组外的对象变淡、不接指针。
+ */
+export function LayerObjects({ objects, isolation }: { objects: readonly CanvasObject[]; isolation: string | null }) {
+  const masks = useMemo(() => groupMasks(objects), [objects])
+  const clipCss = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const m of masks.values()) {
+      const outline = maskOutline(m)
+      // 画不出轮廓的蒙版 = 什么都不剩（与后端 `plan._clipped` 同一条：空裁剪区）
+      out.set(m.id, outline ? clipPathCss(outline, mmToWorld(1)) : 'inset(50%)')
+    }
+    return out
+  }, [masks])
+  return (
+    <>
+      {objects.map((o) => {
+        if (isActiveMask(o, masks)) return null
+        const outside = !!isolation && !inScope(o, isolation)
+        let node = <ObjectView key={o.id} obj={o} outside={outside} />
+        const chain = clipChainOf(o, masks)
+        for (let i = chain.length - 1; i >= 0; i--) {
+          node = (
+            <div key={o.id} data-clip-by={chain[i].id} className="absolute left-0 top-0" style={{ clipPath: clipCss.get(chain[i].id) }}>
+              {node}
+            </div>
+          )
+        }
+        if (outside) {
+          node = (
+            <div key={o.id} data-isolation-outside className="absolute left-0 top-0 opacity-35" style={{ pointerEvents: 'none' }}>
+              {node}
+            </div>
+          )
+        }
+        return node
       })}
     </>
   )
@@ -507,7 +589,7 @@ function FastEditPaper({
     <div
       aria-hidden
       data-fast-edit-paper=""
-      className="pointer-events-none absolute bg-paper"
+      className="pointer-events-none absolute bg-paper shadow-page"
       style={{
         left: 0,
         top: 0,
@@ -572,6 +654,7 @@ function EmptyHint() {
   // 有没有可摆的图按「看得见的图」算（ADR 0184）：从脚本进来、脚本还没出图时是空状态，不是一块空的选图卡
   const hasAssets = visibleFigureCards(panels, viewScope).length > 0
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
+  const fromData = useHasDataFiles()
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
   // 恢复卡不看选区：它是这时唯一的出口，选区里留着什么都不能把它收走（Codex #1839）
@@ -613,19 +696,18 @@ function EmptyHint() {
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
-      {/* 提示坐在页面（纸）上。纸是浅的（默认白纸、浅色背景）：`data-on-paper` 把这一块的界面墨与按钮底换成
-          纸上的墨（index.css 末尾），两套主题都是字直接落在纸上、不垫底（2026-10-13 审计：此前暗色里垫一块深色
-          卡片，白纸正中一块黑，很突兀）。用户把页面背景设成深色时纸上的墨压不住，退回一块主题面板底、字用界面墨
-          （Codex #995）。深浅按页面的实际底色判，与纸上文字 / 选区同一个判据 `groundInkFor`（宪法第二十八节） */}
+      {/* 提示与选图卡都直接坐在页面（纸）上。纸是浅的（默认白纸、浅色背景）：`data-on-paper` 把这一块的界面墨、卡片底与边线
+          重定向到纸与纸墨（index.css 末尾），浅色与暗色都是直接落在白纸上、不再套一层深色或双层外框（2026-10-13 审计 + Phase 3 精修）。
+          用户把页面背景设成深色时纸上的墨压不住，才退回主题面板底、字用界面墨（Codex #995）。 */}
       <div
-        {...(onLightPaper && !showCards ? { 'data-on-paper': '' } : {})}
+        {...(onLightPaper ? { 'data-on-paper': '' } : {})}
         className={cn(
-          'pointer-events-auto p-4',
-          // 选图卡的底：明确的圆角 + 细边（纸上不留一块没有网格的无边界底）
-          showCards ? 'rounded-lg border border-border bg-surface' : !onLightPaper && 'rounded-lg bg-surface',
+          'pointer-events-auto',
+          !showCards && 'p-4',
+          !onLightPaper && 'rounded-lg bg-surface',
         )}
       >
-        {/* 项目里有图：直接摆选图卡（B5）。卡片是界面面（surface），不跟纸上的墨走 */}
+        {/* 项目里有图：直接在纸面上陈列选图卡（B5），单张卡用 raised 纸卡承载，外层不再套盒子 */}
         {showCards ? (
           <EmptyPickCards panels={panels} paperW={mmToWorld(page.w) * zoom} paperH={mmToWorld(page.h) * zoom} />
         ) : (
@@ -635,6 +717,7 @@ function EmptyHint() {
           // 素材清单还没回来时先按「有」说：那句「放文件进目录」是对空项目说的
           hint={sg(assetsLoaded && !hasAssets ? 'emptyHintNoAssets' : 'emptyHint')}
           action={{ label: sg('addFigure'), onClick: () => setLeftTab('assets') }}
+          actionAlt={fromData ? { label: sg('emptyFromData'), onClick: () => setLeftTab('data') } : undefined}
           secondary={
             inTutorial
               ? undefined

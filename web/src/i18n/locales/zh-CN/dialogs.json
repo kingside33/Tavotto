@@ -87,7 +87,7 @@
       "network": "连不上服务器。请检查网络后再试。",
       "timeout": "服务器没有及时回应。请稍后再试。",
       "tls": "和服务器的加密连接没建立起来（证书校验失败）。请检查系统时间与网络代理。",
-      "bad_response": "服务器的回复读不懂。请稍后再试。",
+      "bad_response": "收信服务响应异常，请稍后再试。",
       "api_incompatible": "这个版本的 Tavotto 与服务器不兼容，请先更新。",
       "rate_limited": "发得太频繁了，请稍后再试。",
       "storage_unavailable": "服务器暂时收不了信，请稍后再试。",
@@ -101,9 +101,9 @@
       "upload_missing": "附件没有传完，请再试一次。",
       "upload_url_rejected": "服务器给的上传地址不安全，已拒绝上传。",
       "redirect_blocked": "服务器想把请求转到别处，已拒绝。",
-      "client_error": "服务器认为这封信有问题。请检查内容后再试。",
-      "unexpected_response": "服务器给了意外的回复。请稍后再试。",
-      "internal": "出了点内部错误，没有发送。",
+      "client_error": "信件内容未通过格式校验，请检查附件或邮箱后再试。",
+      "unexpected_response": "收信服务暂时响应异常，请稍后再试。",
+      "internal": "发送服务暂时出错，信件尚未发出。",
       "invalid_email": "回信邮箱的格式不对，请检查，或者留空。",
       "attachment_invalid": "服务器检查附件没通过，请换一个文件再试。",
       "report_not_found": "诊断包没有送到服务器，请取消勾选「附上诊断信息」后再试。"
@@ -175,6 +175,18 @@
     "resultWarnings_other": "有 {{count}} 条提示，见详情",
     "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
     "previewFit": "适合大小",
+    "previewModeLabel": "预览方式",
+    "previewModeFigure": "原图预览",
+    "previewModeLayout": "版面预览",
+    "previewLayoutCycle": "换位置",
+    "previewLayoutCycleHint": "切换图表在论文版面中的排布位置",
+    "previewLayoutSampleNote": "仅作为排版参考，版面预览不会被导出",
+    "previewLayoutUnavailable": "当前无法读取图幅尺寸，暂不支持按真实比例入版预览",
+    "previewLayoutSlotSpec": "{{w}} × {{h}} mm · {{spec}} · {{column}} {{colW}} mm",
+    "previewLayoutSlotGeneric": "{{w}} × {{h}} mm · 双栏版面 · {{column}} {{colW}} mm",
+    "previewLayoutOverflowSpec": "{{w}} × {{h}} mm · 超出「{{spec}}」版芯（{{maxW}} mm）",
+    "previewLayoutOverflowGeneric": "{{w}} × {{h}} mm · 超出版芯宽度（{{maxW}} mm）",
+    "previewLayoutTall": "{{w}} × {{h}} mm · 超出单页版芯高度（{{maxH}} mm）",
     "previewTabs": "预览",
     "previewWhole": "整版",
     "previewFlagged": "有要改的项",
@@ -218,6 +230,7 @@
       "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
     },
     "exported": "导出完成：{{files}}",
+    "signoffReady": "已导出 · {{formats}}",
     "filenameError": {
       "control_char": "文件名里有不可见字符，请重新输入。",
       "dot_only": "「.」和「..」不能用作文件名。",
@@ -231,7 +244,7 @@
     "filenameLabel": "文件名",
     "filenamePlaceholder": "图 1",
     "formatLabel": "格式",
-    "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
+    "jobLost": "这次导出在中途中断。部分文件可能已写出，请检查导出文件夹或重新导出。",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "在问题面板中查看",
     "operationFailed": "无法完成：{{error}}",
@@ -247,9 +260,9 @@
       "queued": "排队中…",
       "rendering": "正在合成…",
       "report": "正在生成样式检查报告…",
-      "unknown": "作业在服务器上找不到了",
+      "unknown": "这次导出已中断",
       "writing": "正在写入文件（{{step}}/{{total}}）…",
-      "inspecting": "正在核验产物…"
+      "inspecting": "正在复核导出文件…"
     },
     "pngHint": "位图",
     "ppiLabel": "分辨率",
@@ -292,7 +305,7 @@
     "transparentNotForRaster": "这张图是照原样导出的，背景由它自己决定。",
     "warningsIntro": "以下修改未能应用到重渲染的图上，成图可能与画布不一致：",
     "advancedLabel": "高级",
-    "strictToggle": "严格核验产物",
+    "strictToggle": "导出后逐项复核成稿",
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
       "failedItems": "核验未通过：{{items}}",
@@ -305,14 +318,16 @@
         "image_ppi": "图像分辨率",
         "clipping": "裁切",
         "dpi_tag": "分辨率标签",
-        "raster_density": "像素密度"
-      }
+        "raster_density": "像素密度",
+        "text_size": "字号"
+      },
+      "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
     },
     "cancelPending": "正在请求取消…",
     "cancelRequested": "已请求取消",
     "cancelFailed": "尚未确认取消，导出可能仍在继续",
     "failTitle": "导出没有完成",
-    "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
+    "cancelNotAccepted": "未能取消这次导出。请先查看导出状态与输出文件夹，再决定是否重试。",
     "statusFailed": "暂时无法获取导出状态，作业仍可能完成",
     "retryStatus": "重试获取状态",
     "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。",
@@ -362,6 +377,7 @@
     "recoverFailUnavailable": "暂时读不到这份排版，请稍后重试。",
     "recoverFailForeign": "这份副本不属于当前项目，没有打开。",
     "recoverIssueInvalid": "读不了",
+    "recoverIssueChartSource": "图表来源缺失或损坏",
     "recoverIssueTooLarge": "文件太大，没有读取",
     "recoverIssueTooNew": "来自更新版本的 Tavotto，这个版本读不了",
     "recoverKeepLooking": "这一批里还没有找到，可以继续往后找。",
@@ -447,6 +463,42 @@
       "canvas-settings": {
         "keywords": "canvas page settings hbsz huabu",
         "label": "画布设置"
+      },
+      "convert-to-path": {
+        "keywords": "convert path zwlj 路径 钢笔",
+        "label": "转为路径"
+      },
+      "pen-tool": {
+        "keywords": "pen gb 路径 贝塞尔",
+        "label": "钢笔"
+      },
+      "edit-anchors": {
+        "keywords": "anchor direct bjmd 直接选择 锚点",
+        "label": "编辑锚点"
+      },
+      "add-anchor": {
+        "keywords": "add anchor tjmd 加点",
+        "label": "添加锚点"
+      },
+      "delete-anchor": {
+        "keywords": "delete anchor scmd 删点",
+        "label": "删除锚点"
+      },
+      "convert-anchor": {
+        "keywords": "convert anchor smooth corner zhmd 平滑 尖角",
+        "label": "转换锚点"
+      },
+      "cut-path": {
+        "keywords": "cut scissors jd 剪刀 断开",
+        "label": "在锚点处断开"
+      },
+      "join-paths": {
+        "keywords": "join connect lj 连接 闭合",
+        "label": "连接"
+      },
+      "average-anchors": {
+        "keywords": "average align pjmd 平均 对齐",
+        "label": "平均锚点"
       },
       "cycle-overlap": {
         "keywords": "cycle overlap twin axis lh lunhuan cd chongdie sszx shuangzongzhou",
@@ -575,6 +627,110 @@
       "zoom-selection": {
         "label": "缩放到选中对象",
         "keywords": "zoom selection sfxz suofang xuanzhong"
+      },
+      "default-appearance": {
+        "keywords": "default fill stroke mrtsms 默认 填色 描边",
+        "label": "默认填色描边"
+      },
+      "swap-fill-stroke": {
+        "keywords": "swap fill stroke hhtsms 互换",
+        "label": "互换填色和描边"
+      },
+      "clear-fill": {
+        "keywords": "no fill none wtc 无填充",
+        "label": "无填充"
+      },
+      "eyedropper-tool": {
+        "keywords": "eyedropper pick color xg 吸管 取色",
+        "label": "吸管"
+      },
+      "pathfinder-unite": {
+        "keywords": "unite union merge combine hb 合并 联集 路径查找器",
+        "label": "合并"
+      },
+      "pathfinder-minus-front": {
+        "keywords": "minus front subtract jqdc 减去 顶层 路径查找器",
+        "label": "减去顶层"
+      },
+      "pathfinder-intersect": {
+        "keywords": "intersect overlap xj 相交 交集 路径查找器",
+        "label": "相交"
+      },
+      "pathfinder-exclude": {
+        "keywords": "exclude xor pccd 排除 重叠 路径查找器",
+        "label": "排除重叠"
+      },
+      "pathfinder-divide": {
+        "keywords": "divide split fg 分割 切开 路径查找器",
+        "label": "分割"
+      },
+      "pathfinder-trim": {
+        "keywords": "trim hide xb 修边 去掉被盖住的 路径查找器",
+        "label": "修边"
+      },
+      "make-compound": {
+        "keywords": "compound path hole jlfhlj 复合路径 挖洞",
+        "label": "建立复合路径"
+      },
+      "release-compound": {
+        "keywords": "release compound sffhlj 释放 复合路径",
+        "label": "释放复合路径"
+      },
+      "offset-path": {
+        "keywords": "offset path expand inset pylj 偏移 外扩 内缩",
+        "label": "偏移路径"
+      },
+      "outline-stroke": {
+        "keywords": "outline stroke expand lkhmb 轮廓化 描边 扩展",
+        "label": "轮廓化描边"
+      },
+      "simplify-path": {
+        "keywords": "simplify smooth reduce anchors jhlj 简化 删锚点 平滑",
+        "label": "简化路径"
+      },
+      "reverse-path": {
+        "keywords": "reverse path direction flip arrow fzlj 反转 方向 箭头",
+        "label": "反转路径方向"
+      },
+      "shape-builder": {
+        "keywords": "shape builder merge regions xszcq 形状生成器 合并 区域",
+        "label": "形状生成器"
+      },
+      "make-clip-mask": {
+        "keywords": "clipping mask clip crop jqmb 剪切蒙版 裁剪",
+        "label": "建立剪切蒙版"
+      },
+      "release-clip-mask": {
+        "keywords": "release clipping mask sfjqmb 释放 剪切蒙版",
+        "label": "释放剪切蒙版"
+      },
+      "transform-again": {
+        "keywords": "transform again repeat zcbh 再次变换 重复",
+        "label": "再次变换"
+      },
+      "reflect-horizontal": {
+        "keywords": "reflect mirror flip horizontal spjx 水平镜像 翻转",
+        "label": "水平镜像"
+      },
+      "reflect-vertical": {
+        "keywords": "reflect mirror flip vertical czjx 垂直镜像 翻转",
+        "label": "垂直镜像"
+      },
+      "quick-layout": {
+        "keywords": "一键排版 yjpb yijianpaiban auto layout arrange align",
+        "label": "一键排版"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector cckbj 拆成 可编辑 矢量 SVG",
+        "label": "拆成可编辑对象"
+      },
+      "outline-text": {
+        "keywords": "outline text create outlines path wzzlk 文字转轮廓 转曲",
+        "label": "文字转轮廓"
+      },
+      "copy-as-svg": {
+        "keywords": "copy svg clipboard illustrator fzwsvg 复制为 SVG 矢量",
+        "label": "复制为 SVG"
       }
     },
     "listLabel": "命令",
@@ -736,6 +892,7 @@
     "title": "科研预设"
   },
   "profiles": {
+    "journalBaseOutputName": "期刊检查基础",
     "useForCanvas": "用于当前画布",
     "useForCanvasSaveFirst": "先保存这份样式的改动，再用于画布",
     "binding": {
@@ -1380,7 +1537,46 @@
       "viewGuide": "查看使用指南",
       "defaultLabel": "默认助手",
       "defaultNone": "没有可用的助手",
-      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制"
+      "convertUnsandboxed": "转换时允许 AI 不受沙盒限制",
+      "fixMemory": {
+        "label": "记住修好的做法",
+        "help": "修好脚本后，在本机记下这次的做法；别的项目遇到同类问题时可直接参考。只存在本机，不上传，也不进诊断包。",
+        "count_other": "已记住 {{count}} 条",
+        "none": "还没有记住的做法",
+        "view": "查看",
+        "title": "记住的做法",
+        "clearAll": "全部删除",
+        "delete": "删除这条",
+        "meta_other": "{{date}} · 用过 {{count}} 次",
+        "launcherText": "查看脚本",
+        "kind": {
+          "run_args": "传入运行参数 {{args}}",
+          "launcher": "加启动脚本",
+          "launcherEnv": "启动脚本里设 {{env}}",
+          "data_link": "把 {{asked}} 指到 {{linked}}",
+          "execution": "改用{{mode}}运行"
+        },
+        "mode": {
+          "safe": "安全模式",
+          "native": "本机 Python"
+        },
+        "shape": {
+          "env_var_missing": "缺环境变量",
+          "script_needs_arguments": "需要命令行参数",
+          "script_needs_input": "等待键盘输入",
+          "input_eof": "等待键盘输入",
+          "missing_input": "找不到数据文件",
+          "relative_import": "相对导入失败",
+          "no_figure_captured": "没画出图",
+          "script_is_library": "只定义了函数",
+          "missing_dependency": "缺少包",
+          "script_uses_gui_dialog": "会弹文件对话框",
+          "safe_file_operation_blocked": "安全模式拦下了文件操作",
+          "other": "其他问题"
+        },
+        "clearBody_other": "删掉全部 {{count}} 条？删了找不回。",
+        "cancel": "取消"
+      }
     },
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",
@@ -1398,7 +1594,7 @@
       "healthTitle": "健康状态",
       "hidePreview": "收起",
       "nextStep": {
-        "engine": "渲染引擎起不来。下面的渲染环境卡片可安装或更换 Python 环境。",
+        "engine": "渲染引擎未能启动。可在下方的渲染环境卡片中安装或切换 Python 环境。",
         "project_open": "先打开一个项目，才能检查项目。",
         "project_readable": "这个目录暂时读不到。重新打开这个项目，或在「全部项目」里换一个。",
         "project_writable": "「写回原始文件」需要这个目录可写。调整权限后，回来点「重新获取」。"
@@ -1443,7 +1639,7 @@
           "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
           "detail_overrides": "正在编辑的图的样式改动",
           "detail_render_env": "渲染环境（Python、matplotlib、已装包、字体）",
-          "detail_runs": "最近的渲染、导出、脚本试运行记录",
+          "detail_runs": "最近的渲染、导出、脚本试运行记录，以及 AI 修复的经过",
           "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
           "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
           "detail_console": "界面控制台的最近报错与警告",
@@ -1453,7 +1649,7 @@
           "detail_crash_reports": "系统崩溃报告（你勾选了）",
           "detail_corrupt_sessions": "会话损坏副本的内容（你勾选了）"
         },
-        "notIncluded": "默认不含脚本、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容。",
+        "notIncluded": "默认不含脚本文件、数据文件和匿名统计标识；报错与日志里可能出现文件夹名、文件名和脚本打印出的内容，用过 AI 修复时还会带上它读过的脚本片段。",
         "save": "保存这份诊断包",
         "saved": "已保存",
         "saveFailed": "没能保存",
@@ -1924,6 +2120,22 @@
         "network": "连不上服务商。",
         "timeout": "连接超时。"
       },
+      "checkConnection": "检查连接",
+      "checking": "检查中",
+      "keyMissing": "请填写密钥",
+      "probeHint": "常见是地址少了 /v1，或者填成了网页地址",
+      "action": {
+        "refillKey": "重填密钥",
+        "switchAi": "换个 AI",
+        "editModel": "改模型",
+        "editAddress": "改地址"
+      },
+      "probe": {
+        "unauthorized": "密钥不对",
+        "quota": "额度用完了",
+        "no_model": "没有这个模型",
+        "unreachable": "连不上这个地址"
+      },
       "subtitle": "连接一个 AI，用于改图或修复环境。",
       "method": {
         "subscription": "订阅登录",
@@ -2000,7 +2212,7 @@
         "host_not_installed": "没检测到 {{host}}。装好并至少打开一次后再试。",
         "mcp_server_not_bundled": "这一版 Tavotto 不带 MCP 服务，请升级桌面版。",
         "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
-        "config_unreadable": "{{host}} 的配置文件读不懂（可能带注释），为免弄坏，没有改它。展开详情看是哪个文件。",
+        "config_unreadable": "无法解析 {{host}} 的配置文件（可能含有注释或非标准格式）；为保护原文件，未做修改。展开详情查看文件路径。",
         "config_write_failed": "写不进 {{host}} 的配置文件。展开详情看是哪个文件。",
         "host_cli_failed": "{{host}} 的命令行没能完成登记。展开详情看原文。",
         "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
@@ -2028,6 +2240,53 @@
       "overwriteTitle": "覆盖 {{host}} 里改过的技能？",
       "overwriteBody": "你改的内容会换成 Tavotto 自带的版本。",
       "cancel": "取消"
+    },
+    "license": {
+      "label": "高级版",
+      "none": "还没激活",
+      "until": "有效期至 {{date}}",
+      "codeLabel": "激活码",
+      "state": {
+        "expired": "已于{{date}}到期",
+        "revoked": "这份授权已失效",
+        "lapsed": "需要联网确认一下授权"
+      },
+      "action": {
+        "enter": "输入激活码",
+        "buy": "购买",
+        "activate": "激活",
+        "release": "解绑这台电脑",
+        "refresh": "现在确认",
+        "renew": "续费",
+        "retry": "再试一次",
+        "cancel": "取消"
+      },
+      "failure": {
+        "invalid_code": "激活码不对，核对一下再试",
+        "device_limit": "这份授权的电脑已经满了，先在另一台上解绑",
+        "revoked": "这份授权已失效",
+        "expired": "这份授权已经到期",
+        "price_unavailable": "现在还不能购买，请稍后再试",
+        "rate_limited": "试得太频繁了，过一会儿再试",
+        "network": "连不上授权服务器，检查网络后再试",
+        "server": "授权服务暂时不可用，请稍后再试",
+        "client_error": "没能完成，请稍后再试"
+      },
+      "lock": {
+        "tip": "高级版功能，点一下了解",
+        "aria": "高级版功能，了解高级版"
+      },
+      "releaseTitle": "解绑后可以在另一台电脑上激活",
+      "plate": {
+        "label": "创始会员",
+        "defaultName": "早期同行者",
+        "nameLabel": "刻在铭牌上的名字",
+        "nameTitle": "名字只保存在这台电脑上",
+        "engrave": "刻上你的名字",
+        "rename": "重新刻名",
+        "turnTitle": "拖一下可以翻面",
+        "issued": "ISSUED ON"
+      }
     }
   },
   "style": {
@@ -2185,9 +2444,13 @@
     "noDiff": "与当前画布没有差异",
     "enlarge": "放大查看",
     "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
+    "previewCanvasMissing": "这个节点记录的画布不在它的排版里，无法预览或恢复。",
     "rename": "改名…",
     "restore": "恢复到这里",
     "restoreHistory": "恢复排版节点「{{name}}」",
+    "restoreProjectBody": "这个节点存的是整份项目，恢复会把所有画布都换成那一版，不只是当前画布。现在的整份项目会先存成「恢复前」节点；恢复本身不能撤销，需要时从那个节点恢复回来。",
+    "restoreProjectInvalid": "这个节点的项目排版读不出来，这次没有恢复。",
+    "restoreProjectTitle": "恢复整份项目？",
     "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreMissingCanvasTitle": "原画布已不存在",
     "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
@@ -2203,6 +2466,7 @@
     "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreUnknownCanvasTitle": "这个节点没有来源画布",
     "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
+    "restoredProject": "已恢复整份项目「{{name}}」。恢复前的整份项目已存成节点，需要时从时间线恢复回去。",
     "save": "存为命名节点",
     "saved": "已把现在存为命名节点「{{name}}」",
     "summary": {
@@ -2304,7 +2568,7 @@
     },
     "welcome": {
       "title": "直接在图上改",
-      "subtitle": "导入绘图脚本，点选、拖动，直观调整图中元素与布局。",
+      "subtitle": "导入绘图脚本或已有图表，点选、拖动，在纸面上从容微调元素与版式。",
       "features": "图例、坐标轴、色条、文字、对齐、整体布局都能直接改",
       "demoLabel": "从绘图脚本到可以直接调整的科研图",
       "codeLabel": "示例脚本 {{name}}（节选）",
@@ -2335,7 +2599,7 @@
       "renderProgress": "示例图渲染进度",
       "builtin": "内置示例",
       "figureLabel": "{{name}} 画出的反应动力学图",
-      "success": "编译完成"
+      "success": "图已就绪，点任意元素试试"
     },
     "legend": {
       "task": "拖动图例，换个位置",
@@ -2347,7 +2611,7 @@
       "cancelled": "已取消，图例回到原处。",
       "farther": "再拖远一点试试。",
       "figureLabel": "反应动力学图，图例可以拖动",
-      "success": "漂亮！图里的元素能直接拖动。"
+      "success": "位置已更新，图内元素可直接拖动。"
     },
     "title": {
       "task": "点击标题，把文字调大一点",
@@ -2361,7 +2625,7 @@
       "increase": "增大字号",
       "titleLabel": "图标题「{{text}}」，{{size}} pt。点击选中后可以改字号",
       "figureLabel": "反应动力学图，标题可以选中",
-      "success": "太棒了！不用改代码，也能调整文字。"
+      "success": "字号已更新，源脚本一字未动。"
     },
     "finish": {
       "title": "{{product}}，直接在图上改",
@@ -2371,7 +2635,7 @@
       "beforeAlt": "调整前：脚本原样画出的图，图例在右下角，标题 {{size}} pt",
       "afterAlt": "你的调整成果：同一组数据，图例换了位置，标题 {{size}} pt",
       "afterAltUnmoved": "你的调整成果：同一组数据，标题 {{size}} pt",
-      "nextHint": "已经学会直接编辑科研图。现在可以试试自己的 Python 绘图脚本。",
+      "nextHint": "现在，导入你自己的 Python 绘图脚本试试看。",
       "demoNote": "教程里的改动只在这个演示中，不会写进任何文件。",
       "start": "开始使用 {{product}}",
       "replay": "重新体验"
@@ -2464,6 +2728,14 @@
     "imageFailed": "有一张图没加载出来，没法对照，请选「保留原图」。"
   },
   "journal": {
+    "nanophotonicsUnknownWarning": "此期刊的分辨率来源未记录或无法识别；请核对当前指南和本项目实际生效设置。",
+    "nanophotonicsLegacyWarning": "保存的 Nanophotonics De Gruyter 分辨率来源可能已过时；该刊现由 Wiley 出版。请核对当前指南、图类条件及项目实际生效设置；此提示不归因具体问题。",
+    "nanophotonicsGuide": "查看 Wiley 作者指南",
+    "leukosScopeWarning": "此排版保存的历史来源针对终稿并区分图类；当前预检未区分投稿阶段和图类，现行要求未知，请核对期刊指南。",
+    "leukosProblemScopeWarning": "所列画布保存的历史来源针对终稿并区分图类；预检未区分投稿阶段和图类，现行要求未知。此提示不能确认任何问题或阈值来自该来源。",
+    "jperStageWarning": "此排版保存的来源对应历史录用稿最终版指南；当前预检未区分投稿阶段。当前要求尚未核实，请核对期刊指南。",
+    "jperProblemGeneralWarning": "所列画布保存的历史来源针对录用后最终稿；预检未区分投稿阶段，当前指南尚未核实。此提示不能确认任何问题或阈值来自该来源。",
+    "sourceIdentityWarning": "此排版保存的一个出处关联的历史采集文本页眉为 Adult，所选期刊为 Child；来源身份待核，请核对作者指南。现有预检规则未改变。",
     "title": "期刊",
     "pick": "选择期刊",
     "search": "搜索名称、缩写或 ISSN",
@@ -2473,10 +2745,13 @@
     "noMatch": "没有匹配的期刊",
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
-    "unspecified": "该期刊未规定",
+    "panelHistoricalNotice": "这是已保存的历史来源，涉及原则接收后的建议；现行要求未知，请核对期刊指南。",
+    "unspecified": "当前快照未记录",
     "hasRequirement": "有要求",
     "strengthRequired": "必须",
     "strengthRecommended": "建议",
+    "strengthExample": "举例",
+    "strengthTypical": "约",
     "unset": "本刊不适用",
     "noJournal": "不按期刊",
     "cleared": "已不按期刊检查",
@@ -2489,18 +2764,45 @@
     "formatsAccepted": "可接受 {{list}}",
     "source": "出处",
     "sourceOf": "{{name}}的出处",
+    "snapshotZoom": "点击放大",
+    "snapshotAlt": "原文截图",
     "picked": "已按「{{name}}」检查",
+    "v2Updated": "「{{name}}」有新的期刊要求，已按它检查",
     "pickedWidth": "已按「{{name}}」检查，页宽改为 {{w}} mm",
     "card": {
-      "adviceBoth": "{{journal}} 说明 {{body}} pt 为正文最小字号，{{script}} pt 为上下标最小字号",
-      "adviceBody": "{{journal}} 说明 {{body}} pt 为正文最小字号",
-      "adviceScript": "{{journal}} 说明 {{script}} pt 为上下标最小字号",
+      "adviceBoth": "字号记录，请参阅来源原文",
+      "adviceBody": "字号记录，请参阅来源原文",
+      "adviceScript": "字号记录，请参阅来源原文",
+      "coverage": {
+        "publisher": "此来源的范围标记：出版社通用。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "journal": "此来源的范围标记：期刊专属。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "sample": "此来源的范围标记：单刊样本。标记可能是默认值或已过时，是否适用于本刊未核实。",
+        "unknown": "来源范围和适用性未核实。"
+      },
       "open": "打开原网页",
       "archive": "存档",
+      "fromV2": "新版",
       "aria": "出处"
+    },
+    "confirm": {
+      "title": "需要你确认（{{count}}）",
+      "condition": "原文条件：{{text}}",
+      "aria": "需要你确认的要求"
     },
     "field": {
       "page_columns": "栏宽",
+      "v2_raster_dpi_dpi": "位图",
+      "v2_font_family": "字体",
+      "v2_font_size_pt": "字号",
+      "v2_file_format": "文件格式",
+      "v2_color_mode": "色彩模式",
+      "v2_min_line_width_pt": "线宽",
+      "v2_width_mm": "图宽",
+      "v2_width_in": "图宽",
+      "v2_figure_piece_width_mm": "单图宽",
+      "v2_figure_piece_width_in": "单图宽",
+      "v2_figure_size_max_mm": "图幅上限",
+      "v2_figure_size_max_in": "图幅上限",
       "widths_mm_single": "单栏",
       "widths_mm_double": "双栏",
       "widths_mm_tolerance_mm": "栏宽容差",
@@ -2510,6 +2812,7 @@
       "max_font_size_pt": "最大字号",
       "min_script_font_size_pt": "上下标最小字号",
       "min_raster_dpi": "位图分辨率",
+      "min_line_width_pt": "最小线宽",
       "line_widths_pt": "线宽",
       "font_family_latin_accepted": "字体",
       "preferred_formats_export_default": "默认导出格式",
@@ -2530,6 +2833,7 @@
       "info_width_range_double_mm": "双栏宽范围",
       "info_width_single_mm": "单栏宽（仅展示）",
       "info_width_double_mm": "双栏宽（仅展示）",
+      "info_panel_max_width_aip_mm": "图版最大宽（历史 AIP 建议）",
       "info_min_width_mm": "最小宽度",
       "info_min_line_width_pt": "最小线宽",
       "info_dpi_by_kind": "分辨率（按图类）",

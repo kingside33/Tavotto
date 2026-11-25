@@ -15,6 +15,7 @@ import { ExternalLink, Heart } from '../ui/icons'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, SettingRow } from './SettingRow'
+import { LicenseRow } from './LicenseRow'
 import { UpdateSettings } from './UpdateSettings'
 
 const st = (key: string, values?: Record<string, unknown>) =>
@@ -59,6 +60,8 @@ export function PrivacyAboutSettings() {
   return (
     <div className="contents">
       <ProductBlock version={version} />
+      {/* 高级版授权：一行；入口没开（PRODUCTION_LIVE = False）时整块不渲染（ADR 0193 §八） */}
+      <LicenseRow />
       {/* 「更新」并进这一页（2026-09-30）：版本在上、检查更新紧随其后，再是隐私 */}
       <UpdateSettings />
       <PrivacyBlock />
@@ -68,9 +71,10 @@ export function PrivacyAboutSettings() {
 
 function ProductBlock({ version }: { version?: string }) {
   return (
-    // 窄宽度（约 350px 或高缩放）下按钮折到产品块下面一行，而不是把产品文字挤到被裁掉：
-    // 标志 + 文字是一组、基准宽 18rem，放不下按钮时整组占满一行
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-3" data-settings-anchor="about.support">
+    <div
+      className="flex flex-wrap items-center gap-x-5 gap-y-3 py-1.5"
+      data-settings-anchor="about.support"
+    >
       <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-4" data-about-product>
         {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
         <BrandMark size={54} />

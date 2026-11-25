@@ -17,7 +17,7 @@ import { ROW_GRID_COLS } from '../ui/Field'
 import { CanvasPage } from './CanvasPage'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
 import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
-import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/store/actions'
+import { PAGE_MM_MAX, PAGE_MM_MIN, setPageSetup } from '@/store/actions'
 import { useProfileStore } from '@/store/profileStore'
 import journalVectors from '../../../../tests/golden/journal_vectors.json'
 import { loadCatalog } from '@/lib/journals'
@@ -78,6 +78,23 @@ describe('CanvasPage', () => {
     act(() => swap!.click())
     const after = useDocumentStore.getState().doc.page
     expect([after.w, after.h]).toEqual([before.h, before.w])
+  })
+
+  it('用户改页面尺寸的入口（横竖交换 / 方向 / 预设 / 宽高）都置 page.userSized；背景、页边距不置', () => {
+    const userSized = () => useDocumentStore.getState().doc.page.userSized
+    expect(userSized()).toBeUndefined()
+    act(() => container.querySelector<HTMLButtonElement>('button[aria-label="横竖交换"]')!.click())
+    expect(userSized()).toBe(true)
+    // 复位后再走方向开关
+    act(() => useDocumentStore.getState().commit(literal('复位'), (d) => { delete d.page.userSized }))
+    const opt = [...container.querySelectorAll<HTMLButtonElement>('[data-page-orientation] [data-value]')].find(
+      (b) => b.getAttribute('aria-checked') !== 'true',
+    )!
+    act(() => opt.click())
+    expect(userSized()).toBe(true)
+    act(() => useDocumentStore.getState().commit(literal('复位'), (d) => { delete d.page.userSized }))
+    act(() => setPageSetup({ bg: '#ffffff' }, literal('背景')))
+    expect(userSized()).toBeUndefined()
   })
 
   it('正方形画布没有方向：两档都禁用，不摆一个点了也不变的控件（Codex #829 P2）', () => {
@@ -437,7 +454,7 @@ describe('单图编辑时的画布页', () => {
 
   afterEach(() => useWorkspaceStore.getState().clear())
 
-  it('头部讲单图编辑与导出尺寸，页面尺寸收成一行摘要；点开才有预设与宽高', async () => {
+  it('头部讲单图编辑与导出尺寸；多图排版的页面设置整组不显示', async () => {
     act(() =>
       useDocumentStore.getState().commit(literal('图'), (d) => {
         d.objects = [panel as CanvasObject]
@@ -447,12 +464,13 @@ describe('单图编辑时的画布页', () => {
     remount()
     expect(container.querySelector('[data-single-export-size]')?.textContent?.replace(/\s/g, ' ')).toContain('73.5 × 57.8 mm')
     expect(container.querySelector('[data-single-export-note]')).not.toBeNull()
-    expect(container.querySelector('[data-page-size-row]'), '收起时没有宽高').toBeNull()
-    act(() => fold('canvas-page').click())
-    expect(container.querySelector('[data-page-size-row]')).not.toBeNull()
+    expect(container.querySelector('[data-page-size-row]'), '单图没有页面宽高').toBeNull()
+    expect(container.querySelector('[data-page-preset-select]'), '单图没有页面预设').toBeNull()
+    expect(container.querySelector('[data-fold="canvas-page"]'), '单图没有多图排版页面摘要行').toBeNull()
+    expect(container.querySelector('[data-fold="canvas-bg"]'), '背景照旧').not.toBeNull()
   })
 
-  it('按期刊选的项目：页面摘要与下拉选中项是同一个判据，显示该期刊的栏名（只看宽度）', () => {
+  it('按期刊选的项目：排版里的预设下拉显示该期刊的栏名（只看宽度）', () => {
     useJournalCatalogStore.setState({ catalog: loadCatalog(journalVectors.catalog) })
     act(() =>
       useDocumentStore.getState().commit(literal('图'), (d) => {
@@ -460,9 +478,8 @@ describe('单图编辑时的画布页', () => {
       }),
     )
     act(() => selectJournal('fx-cols-inherit')) // 页宽 → 121，高度不动
-    act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
     remount()
-    expect(fold('canvas-page').textContent).toContain('2 栏')
+    expect(container.querySelector('[data-page-preset-select] [role="combobox"]')?.textContent).toContain('2 栏')
     useJournalCatalogStore.setState({ catalog: loadCatalog() })
   })
 

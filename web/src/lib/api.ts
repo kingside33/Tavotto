@@ -1,9 +1,9 @@
 import { PRODUCT_NAME } from './brand'
-import { chartVersionCanvas, chartVersionProject, documentApiPath, documentResponseFormat, type DocumentFormat, type VersionCanvasIdentity } from './documentFormat'
 import type { ChartSourceReceipt } from './chartSourceReceipts'
 import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './figureSnapshotPreview'
 import { figureOriginIdentity, sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
 import type { ProjectFileAxis, ProjectFileEdit, ProjectFileRead, ProjectFileRecovery, ProjectFileReservation, ProjectFileResult, ProjectFileView } from './projectFileSession'
+import type { ReadGradient } from './gradient'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -287,6 +287,16 @@ function artifactErrorMsg(err: unknown): UiMessage {
   return msg(classifyArtifactFailure(err).messageKey, undefined, 'errors')
 }
 
+/**
+ * `errors:backend.<code>` 的键。`image_format_mismatch` 有文件名时用点名那一句（`_file`），没有（敏感运行里与参数有关的文件名被省掉）
+ * 用「这张图片」那一句——同一个码两句话，占位符各自对得上后端给的参数。
+ */
+export function backendTextKey(code: string, params?: Record<string, unknown>): string {
+  return code === 'image_format_mismatch' && typeof params?.file === 'string' && params.file
+    ? 'backend.image_format_mismatch_file'
+    : `backend.${code}`
+}
+
 export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
     return artifactErrorMsg(err)
@@ -305,7 +315,7 @@ export function engineErrorMsg(err: unknown): UiMessage {
     if (detail || !template.includes('{{error}}')) {
       // 结构化 params（错误转换合同 `pool.recovery_params`，如 TeX 缺的命令 / 文件）一并给文案；
       // `error` 永远是 traceback 末行，不让 params 里的同名键盖掉
-      return msg(`backend.${err.code}`, { ...(err.params ?? {}), error: detail }, 'errors')
+      return msg(backendTextKey(err.code, err.params), { ...(err.params ?? {}), error: detail }, 'errors')
     }
   }
   return literal(err instanceof Error ? err.message : String(err))
@@ -340,7 +350,7 @@ export function backendCodeMsg(
     return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
   }
   if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
-    return msg(`backend.${code}`, params ?? {}, 'errors')
+    return msg(backendTextKey(code, params), params ?? {}, 'errors')
   }
   return literal(fallback)
 }
@@ -414,7 +424,7 @@ const errorBody = (res: Response): Promise<Record<string, unknown>> =>
  * `pj` 显式给出时用它，不用全局当前项目：见 `session.apiUrlFor` 的说明——
  * 排队稍后才发出的写入，属于**排队那一刻**的项目。`undefined` = 用全局的。
  */
-async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null, documentFormat?: DocumentFormat): Promise<T> {
+async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null): Promise<T> {
   const res =
     pj === undefined
       ? await fetch(apiUrl(url), withProject(init))
@@ -432,7 +442,6 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null,
     noteEngine500(res.status, body, init?.method, url)
     throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
-  if (documentFormat === 'v4' && (!init?.method || init.method === 'GET')) requireDocumentResponseFormat(res, documentFormat)
   return res.json() as Promise<T>
 }
 
@@ -950,47 +959,17 @@ export const panelSrc = (
   return null
 }
 
-function documentJsonFetch(format?: DocumentFormat) {
-  return <T>(path: string, init?: RequestInit, pj?: string | null): Promise<T> =>
-    format === 'v4' ? jsonFetch<T>(documentApiPath(path, format), init, pj, format) : jsonFetch<T>(path, init, pj)
-}
-
-function requireDocumentResponseFormat(res: Response, format?: DocumentFormat): void {
-  if (!documentResponseFormat(res.headers.get('X-Tavotto-Document-Format'), format)) {
-    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
-  }
-}
-
-/**
- * A namespace endpoint that answers "there is no such contract here": 404/405,
- * or a v4 request whose reply lacks the v4 format header. This is *not* a
- * transient outage; treating it as one blocks saves and vetoes the other
- * namespace's valid document.
- */
-function namespaceUnsupported(error: unknown, format?: DocumentFormat): boolean {
-  if (!(error instanceof ApiError)) return false
-  if (error.status === 404 || error.status === 405) return true
-  return format === 'v4' && error.status === 400 && error.body?.code === 'invalid_document'
-}
-
-function requireDocumentSchema(raw: unknown, format?: DocumentFormat): unknown {
-  if (format === 'v4' && (!raw || typeof raw !== 'object' || (raw as { schema?: unknown }).schema !== 4)) {
-    throw new ApiError('Unexpected document schema.', 400, { code: 'invalid_document' })
-  }
-  return raw
-}
-
 /* ----------------------------- 布局存取 ----------------------------------- */
 
-export const fetchLayoutNames = (format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
+export const fetchLayoutNames = () =>
+  jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
 
 /**
  * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
  * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
  */
-export const fetchLayoutList = (format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ layouts: string[]; modified?: Record<string, number>; document_dir?: unknown }>('/api/layouts').then((r) => ({
+export const fetchLayoutList = () =>
+  jsonFetch<{ layouts: string[]; modified?: Record<string, number>; document_dir?: unknown }>('/api/layouts').then((r) => ({
     names: r.layouts,
     modified: r.modified ?? {},
     ...(typeof r.document_dir === 'string' ? { documentDir: r.document_dir } : {}),
@@ -1007,8 +986,8 @@ export interface FetchedLayout {
   file: string | null
 }
 
-export async function fetchLayout(name: string, format?: DocumentFormat, pj?: string | null): Promise<FetchedLayout> {
-  const path = documentApiPath(`/api/layouts/${encodeURIComponent(name)}`, format)
+export async function fetchLayout(name: string, pj?: string | null): Promise<FetchedLayout> {
+  const path = `/api/layouts/${encodeURIComponent(name)}`
   const res = pj === undefined ? await fetch(apiUrl(path), withProject())
     : await fetch(apiUrlFor(path, pj), withProjectFor(undefined, pj))
   if (!res.ok) {
@@ -1021,10 +1000,9 @@ export async function fetchLayout(name: string, format?: DocumentFormat, pj?: st
     noteProjectGone(res.status, body)
     throw new ApiError(typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`, res.status, body)
   }
-  requireDocumentResponseFormat(res, format)
   const file = res.headers.get('X-Tavotto-Layout-File')
   return {
-    doc: requireDocumentSchema(await res.json(), format),
+    doc: await res.json(),
     revision: res.headers.get('X-Tavotto-Revision'),
     file: file ? decodeURIComponent(file) : null,
   }
@@ -1032,7 +1010,6 @@ export async function fetchLayout(name: string, format?: DocumentFormat, pj?: st
 
 export interface SavedLayout {
   project_file?: ProjectFileResult
-  document_format?: 'v4'
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
@@ -1059,16 +1036,15 @@ export const saveLayout = (
   name: string,
   doc: FigureDocument | ProjectDocument,
   baseRevision?: string,
-  opts?: { target?: 'project'; format?: DocumentFormat; pj?: string | null; workingDocId?: string; bindingIntent?: number },
+  opts?: { target?: 'project'; pj?: string | null; workingDocId?: string; bindingIntent?: number },
 ) => {
-  const format = opts?.format
   const params = new URLSearchParams()
   if (baseRevision !== undefined) params.set('base_revision', baseRevision)
   if (opts?.target) params.set('target', opts.target)
   if (opts?.workingDocId !== undefined) params.set('working_doc_id', opts.workingDocId)
   if (opts?.bindingIntent !== undefined) params.set('binding_intent', String(opts.bindingIntent))
   const qs = params.toString()
-  return documentJsonFetch(format)<SavedLayout>(
+  return jsonFetch<SavedLayout>(
     `/api/layouts/${encodeURIComponent(name)}` + (qs ? `?${qs}` : ''),
     {
       method: 'POST',
@@ -1110,7 +1086,6 @@ export const REVISION_ABSENT = 'absent'
  */
 export interface PutAutosaveResult {
   project_file?: ProjectFileResult
-  document_format?: 'v4'
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
@@ -1137,7 +1112,6 @@ export const putAutosave = (
   base?: number,
   baseRevision?: string,
   pj?: string | null,
-  format?: DocumentFormat,
   opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
 ) => {
   const q = new URLSearchParams()
@@ -1146,7 +1120,7 @@ export const putAutosave = (
   if (opts) q.set('project_file_edit', JSON.stringify(opts.projectFileEdit))
   if (opts?.projectFileRecovery) q.set('project_file_recovery', JSON.stringify(opts.projectFileRecovery))
   const qs = q.toString()
-  return documentJsonFetch(format)<PutAutosaveResult>(
+  return jsonFetch<PutAutosaveResult>(
     `/api/autosave/${encodeURIComponent(docId)}${qs ? `?${qs}` : ''}`,
     {
       method: 'PUT',
@@ -1191,9 +1165,9 @@ async function projectFileRequest<T>(request: (signal: AbortSignal) => Promise<T
 }
 
 /** 后端工作副本元信息；与可携的 schema 3/4 正文分离。只有明确 404 才兼容旧本机绑定。 */
-export async function fetchProjectFile(documentId: string, pj: string, format?: DocumentFormat): Promise<ProjectFileRead> {
+export async function fetchProjectFile(documentId: string, pj: string): Promise<ProjectFileRead> {
   try {
-    const value = await projectFileRequest(signal => documentJsonFetch(format)<ProjectFileRead>(
+    const value = await projectFileRequest(signal => jsonFetch<ProjectFileRead>(
       `/api/layout-session/project-file/${encodeURIComponent(documentId)}`, { signal }, pj,
     ))
     if (validProjectFileView(value)) return value
@@ -1209,7 +1183,7 @@ export async function fetchProjectFile(documentId: string, pj: string, format?: 
     }
     return { status: 'unsupported' }
   } catch (error) {
-    if (namespaceUnsupported(error, format)) return { status: 'unsupported' }
+    if (error instanceof ApiError && (error.status === 404 || error.status === 405)) return { status: 'unsupported' }
     throw error
   }
 }
@@ -1231,9 +1205,9 @@ function validProjectFileView(value: unknown): value is ProjectFileView {
 
 export async function reserveProjectFile(documentId: string, pj: string, body: {
   name: string; autosave_revision: string | null; axis: ProjectFileAxis; expected_binding_sequence: number | null
-}, format?: DocumentFormat): Promise<ProjectFileReservation> {
+}): Promise<ProjectFileReservation> {
   try {
-    return await projectFileRequest(signal => documentJsonFetch(format)<ProjectFileReservation>(`/api/layout-session/project-file/${encodeURIComponent(documentId)}/reserve`, {
+    return await projectFileRequest(signal => jsonFetch<ProjectFileReservation>(`/api/layout-session/project-file/${encodeURIComponent(documentId)}/reserve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
     }, pj))
   } catch (error) {
@@ -1244,13 +1218,13 @@ export async function reserveProjectFile(documentId: string, pj: string, body: {
 
 export const confirmProjectFile = (documentId: string, pj: string, body: {
   name: string; intent_sequence: number; revision: string
-}, format?: DocumentFormat) => projectFileRequest(signal => documentJsonFetch(format)<ProjectFileResult>(
+}) => projectFileRequest(signal => jsonFetch<ProjectFileResult>(
   `/api/layout-session/project-file/${encodeURIComponent(documentId)}/confirm`,
   { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
 )).then(validProjectFileResult)
 
-export const cancelProjectFile = (documentId: string, pj: string, sequence: number, format?: DocumentFormat) =>
-  projectFileRequest(signal => documentJsonFetch(format)<{ state: 'cancelled' | 'superseded' }>(
+export const cancelProjectFile = (documentId: string, pj: string, sequence: number) =>
+  projectFileRequest(signal => jsonFetch<{ state: 'cancelled' | 'superseded' }>(
     `/api/layout-session/project-file/${encodeURIComponent(documentId)}/intent/${sequence}`, { method: 'DELETE', signal }, pj,
   ))
 
@@ -1264,9 +1238,8 @@ export interface FetchedAutosave {
 export async function fetchAutosave(
   docId: string,
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<FetchedAutosave | null> {
-  const path = documentApiPath(`/api/autosave/${encodeURIComponent(docId)}`, format)
+  const path = `/api/autosave/${encodeURIComponent(docId)}`
   const res =
     pj === undefined
       ? await fetch(apiUrl(path), withProject())
@@ -1276,8 +1249,7 @@ export async function fetchAutosave(
     noteProjectGone(res.status, await errorBody(res))
     throw new Error(`HTTP ${res.status}`)
   }
-  requireDocumentResponseFormat(res, format)
-  return { doc: requireDocumentSchema(await res.json(), format), revision: res.headers.get('X-Tavotto-Revision') }
+  return { doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
 }
 
 /**
@@ -1297,8 +1269,8 @@ export type AutosaveProbe =
  * 纯读：问后端这个槽位里有什么，**不抛、不记 revision、不碰任何本机状态**。恢复流程遍历候选时
  * 用它（`fetchAutosave` 把 5xx 与「没有」都折成抛 / null，且 400 的原因丢了）。`pj` 见 putAutosave。
  */
-export async function probeAutosave(docId: string, pj?: string | null, format?: DocumentFormat): Promise<AutosaveProbe> {
-  const path = documentApiPath(`/api/autosave/${encodeURIComponent(docId)}`, format)
+export async function probeAutosave(docId: string, pj?: string | null): Promise<AutosaveProbe> {
+  const path = `/api/autosave/${encodeURIComponent(docId)}`
   let res: Response
   try {
     res =
@@ -1312,12 +1284,11 @@ export async function probeAutosave(docId: string, pj?: string | null, format?: 
   if (!res.ok) {
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
-    if (res.status === 400) {
+    if (res.status === 400 || res.status === 422) {
       return { kind: 'invalid', code: typeof body.code === 'string' ? body.code : null }
     }
     return { kind: 'unavailable', status: res.status }
   }
-  if (!documentResponseFormat(res.headers.get('X-Tavotto-Document-Format'), format)) return { kind: 'invalid', code: 'invalid_document' }
   try {
     return { kind: 'found', doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
   } catch {
@@ -1328,15 +1299,15 @@ export async function probeAutosave(docId: string, pj?: string | null, format?: 
 }
 
 /** 磁盘那一份的摘要；没有这份文件返回 null */
-export const fetchAutosaveSummary =(docId: string, pj?: string | null, format?: DocumentFormat) =>
-  documentJsonFetch(format)<DiskDocumentSummary>(
+export const fetchAutosaveSummary = (docId: string, pj?: string | null) =>
+  jsonFetch<DiskDocumentSummary>(
     `/api/autosave/${encodeURIComponent(docId)}/summary`,
     undefined,
     pj,
   ).catch(() => null)
 
-export const deleteAutosave = (docId: string, format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
+export const deleteAutosave = (docId: string) =>
+  jsonFetch<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
     method: 'DELETE',
   })
 
@@ -1373,7 +1344,7 @@ export type SessionIndexStatus = 'ok' | 'missing' | 'degraded' | 'recovered'
  * - `unavailable`：网络 / 超时 / 5xx / 401 / 403——**不是** 404，不许当旧端点放行。
  */
 export type OpenIntent =
-  | { version: 1; status: 'ok'; sequence: number; snapshot: string; latest: { document_format: DocumentFormat; doc_id: string; pointer: 'last' | 'pending' } | null }
+  | { version: 1; status: 'ok'; sequence: number; snapshot: string; latest: { doc_id: string; pointer: 'last' | 'pending' } | null }
   | { version: 1; status: 'stale' | 'untracked'; snapshot: string }
   | { version: 1; status: 'unavailable' }
 
@@ -1390,7 +1361,7 @@ function parseOpenIntent(raw: unknown): OpenIntent | undefined {
   if (r.latest !== null) {
     if (!r.latest || typeof r.latest !== 'object' || Array.isArray(r.latest)) return { version: 1, status: 'unavailable' }
     const v = r.latest as Record<string, unknown>
-    if (Object.keys(v).length !== 3 || !['legacy', 'v4'].includes(String(v.document_format)) || typeof v.doc_id !== 'string' || !v.doc_id || !['last', 'pending'].includes(String(v.pointer))) return { version: 1, status: 'unavailable' }
+    if (Object.keys(v).length !== 2 || typeof v.doc_id !== 'string' || !v.doc_id || !['last', 'pending'].includes(String(v.pointer))) return { version: 1, status: 'unavailable' }
   }
   return raw as OpenIntent
 }
@@ -1421,9 +1392,9 @@ function parseSessionRef(v: unknown): SessionPointer | null {
 
 const INDEX_STATUSES: readonly SessionIndexStatus[] = ['ok', 'missing', 'degraded', 'recovered']
 
-export async function fetchLayoutSessionResult(pj?: string | null, format?: DocumentFormat, opts?: { includeOpenIntent: true }): Promise<SessionFetch> {
+export async function fetchLayoutSessionResult(pj?: string | null, opts?: { includeOpenIntent: true }): Promise<SessionFetch> {
   try {
-    const body = await documentJsonFetch(format)<Record<string, unknown>>(`/api/layout-session${opts?.includeOpenIntent ? '?include_open_intent=1' : ''}`, undefined, pj)
+    const body = await jsonFetch<Record<string, unknown>>(`/api/layout-session${opts?.includeOpenIntent ? '?include_open_intent=1' : ''}`, undefined, pj)
     const index = INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok'
     return {
       kind: 'ok',
@@ -1435,11 +1406,9 @@ export async function fetchLayoutSessionResult(pj?: string | null, format?: Docu
     }
   } catch (e) {
     if (e instanceof ApiError) {
-      // A backend that does not implement this namespace answers with a
-      // generic error (or a plain 200 the format check rejects). That is
-      // "unsupported", never a transient outage that may veto the other
-      // namespace's valid document.
-      if (namespaceUnsupported(e, format)) return { kind: 'unsupported' }
+      // A backend that does not implement this namespace answers 404/405. That is
+      // "unsupported", never a transient outage.
+      if (e.status === 404 || e.status === 405) return { kind: 'unsupported' }
       return { kind: 'unavailable', status: e.status }
     }
     return { kind: 'unavailable', status: null }
@@ -1452,9 +1421,8 @@ export async function fetchLayoutSessionResult(pj?: string | null, format?: Docu
  */
 export async function fetchLayoutSession(
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<{ last: LayoutSessionLast | null } | undefined> {
-  const r = await (format === 'v4' ? fetchLayoutSessionResult(pj, format) : fetchLayoutSessionResult(pj))
+  const r = await fetchLayoutSessionResult(pj)
   return r.kind === 'ok' ? { last: r.last } : undefined
 }
 
@@ -1469,8 +1437,8 @@ export interface PutLayoutSessionLastResult {
   pending?: LayoutSessionLast | null
 }
 
-export const putLayoutSessionLast = (ref: { doc_id: string; name: string; repair?: true }, pj?: string | null, format?: DocumentFormat) =>
-  documentJsonFetch(format)<PutLayoutSessionLastResult>(
+export const putLayoutSessionLast = (ref: { doc_id: string; name: string; repair?: true }, pj?: string | null) =>
+  jsonFetch<PutLayoutSessionLastResult>(
     '/api/layout-session/last',
     { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
     pj,
@@ -1501,10 +1469,9 @@ export interface OwnerEvidence {
 export async function fetchLayoutOwnerEvidence(
   docId: string,
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<OwnerEvidence | 'unsupported' | 'unavailable'> {
   try {
-    const body = await documentJsonFetch(format)<{ owner?: unknown; evidence?: unknown; verified?: unknown; revision?: unknown }>(
+    const body = await jsonFetch<{ owner?: unknown; evidence?: unknown; verified?: unknown; revision?: unknown }>(
       `/api/layout-session/owner?doc_id=${encodeURIComponent(docId)}`,
       undefined,
       pj,
@@ -1523,7 +1490,7 @@ export async function fetchLayoutOwnerEvidence(
         : {}),
     }
   } catch (e) {
-    return namespaceUnsupported(e, format) ? 'unsupported' : 'unavailable'
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
   }
 }
 
@@ -1534,9 +1501,8 @@ export async function fetchLayoutOwnerEvidence(
 export async function fetchLayoutOwner(
   docId: string,
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<'this' | 'other' | 'unknown' | null | undefined> {
-  const r = await (format === 'v4' ? fetchLayoutOwnerEvidence(docId, pj, format) : fetchLayoutOwnerEvidence(docId, pj))
+  const r = await fetchLayoutOwnerEvidence(docId, pj)
   if (r === 'unsupported') return undefined
   if (r === 'unavailable') return null
   return r.owner
@@ -1548,7 +1514,6 @@ export async function fetchLayoutOwner(
  * 拿不到就没有——前端不编缩略图。
  */
 export interface RecoveryCandidateItem {
-  format?: DocumentFormat
   doc_id: string
   name: string
   updatedAt: number | null
@@ -1556,8 +1521,8 @@ export interface RecoveryCandidateItem {
   /** 正文的内容 hash；确认恢复时用它核对「预览之后有没有被改过」 */
   revision: string | null
   schema: number | null
-  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读 */
-  status: 'ok' | 'invalid' | 'too_new' | 'too_large'
+  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读；`chart_source_mismatch` 图表附件缺损 */
+  status: 'ok' | 'invalid' | 'too_new' | 'too_large' | 'chart_source_mismatch'
   canvases: number
   objects: number
   owner: 'this' | 'unknown'
@@ -1577,7 +1542,7 @@ export interface RecoveryCandidatePage {
   index: SessionIndexStatus
 }
 
-const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large'] as const
+const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large', 'chart_source_mismatch'] as const
 
 function parseCandidate(v: unknown): RecoveryCandidateItem | null {
   const r = v as Record<string, unknown> | null
@@ -1623,18 +1588,17 @@ export async function fetchRecoveryCandidates(
   pj: string | null,
   cursor?: string,
   limit = 50,
-  format?: DocumentFormat,
 ): Promise<RecoveryCandidatePage | 'unsupported' | 'unavailable'> {
   const q = new URLSearchParams({ scope, limit: String(limit) })
   if (cursor) q.set('cursor', cursor)
   try {
-    const body = await documentJsonFetch(format)<Record<string, unknown>>(
+    const body = await jsonFetch<Record<string, unknown>>(
       `/api/layout-session/candidates?${q.toString()}`,
       undefined,
       pj,
     )
     const items = Array.isArray(body?.items)
-      ? body.items.map(value => { const item = parseCandidate(value); return item && format === 'v4' ? { ...item, format } : item }).filter((x): x is RecoveryCandidateItem => x !== null)
+      ? body.items.map(parseCandidate).filter((x): x is RecoveryCandidateItem => x !== null)
       : []
     return {
       items,
@@ -1643,7 +1607,7 @@ export async function fetchRecoveryCandidates(
       index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok',
     }
   } catch (e) {
-    return namespaceUnsupported(e, format) ? 'unsupported' : 'unavailable'
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
   }
 }
 
@@ -1710,6 +1674,12 @@ export interface LayoutVersionMeta {
   description: string
   objects: number
   page?: { w: number; h: number }
+  /**
+   * 节点正文的 schema（2 = 单画布；3 / 4 = 整份项目）。恢复按它分派「只盖当前
+   * 画布」还是「换整份项目」。旧后端不发这个字段 = 不知道；调用方按「不知道」
+   * 处理，不拿 `page` 在不在去猜。
+   */
+  schema?: number
   /**
    * 这个检查点拍的是**哪一张画布**（R-03）。
    * 检查点存的是激活画布的内容，却按 documentId（整个项目）归档；不记下画布
@@ -1898,8 +1868,7 @@ export async function fetchExecTraceDiagnostic(
 export const fetchVersions = (
   docId: string,
   sketch?: { objects: number; textChars: number },
-  format?: DocumentFormat,
-) => (format === 'v4' ? fetchTimeline(docId, sketch, format) : fetchTimeline(docId, sketch)).then((r) => r.versions)
+) => fetchTimeline(docId, sketch).then((r) => r.versions)
 
 /**
  * 时间线此刻的体积（ADR 0101）。`namedOver` = 命名节点自己就超出了字节上限：
@@ -1916,10 +1885,9 @@ export interface TimelineBudget {
 export const fetchTimeline = (
   docId: string,
   sketch?: { objects: number; textChars: number },
-  format?: DocumentFormat,
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return documentJsonFetch(format)<{
+  return jsonFetch<{
     versions: LayoutVersionMeta[]
     budget?: TimelineBudget
     /**
@@ -1933,10 +1901,8 @@ export const fetchTimeline = (
 }
 
 /** 节点缩略图的地址（`<img src>`）。没有缩略图的节点别调它。 */
-export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>, format?: DocumentFormat) =>
-  apiUrl(
-    documentApiPath(`/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`, format),
-  )
+export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>) =>
+  apiUrl(`/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`)
 
 /** 给节点挂缩略图。`pj` = 拍节点那一刻的项目（关项目 / 回主页时它随后就变了） */
 export const putVersionThumb = (
@@ -1944,25 +1910,19 @@ export const putVersionThumb = (
   vid: string,
   thumb: { blob: Blob; type: string; box?: { x: number; y: number; w: number; h: number } },
   pj?: string | null,
-  format?: DocumentFormat,
 ) =>
-  documentJsonFetch(format)<{ ok: true; thumb: 'webp' | 'png' }>(
+  jsonFetch<{ ok: true; thumb: 'webp' | 'png' }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb` +
       (thumb.box ? `?box=${[thumb.box.x, thumb.box.y, thumb.box.w, thumb.box.h].join(',')}` : ''),
     { method: 'PUT', headers: { 'Content-Type': thumb.type }, body: thumb.blob },
     pj,
   )
 
-export const fetchVersionDoc = (docId: string, vid: string, format?: DocumentFormat, pj?: string | null) =>
-  documentJsonFetch(format)<{ doc: FigureDocument | ProjectDocument } & LayoutVersionMeta>(
+export const fetchVersionDoc = (docId: string, vid: string, pj?: string | null) =>
+  jsonFetch<{ doc: FigureDocument | ProjectDocument } & LayoutVersionMeta>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     undefined, pj,
-  ).then(result => {
-    if (format !== 'v4') return result as { doc: FigureDocument } & LayoutVersionMeta
-    const doc = chartVersionCanvas(result.doc)
-    if (!doc) throw new ApiError('Invalid canvas version.', 400, { code: 'invalid_document' })
-    return { ...result, doc }
-  })
+  )
 
 export const createVersion = (
   docId: string,
@@ -1973,33 +1933,34 @@ export const createVersion = (
     /** 用户起的名字才是命名节点（ADR 0101）；程序起的名字（「恢复前」）不带它 */
     named?: boolean
     moment?: LayoutMoment
-    doc: FigureDocument
+    /**
+     * 节点正文。schema 2 = 单画布节点（既有检查点）；schema 3 / 4 = 整份项目节点
+     * （原地升级的备份原语 `takeProjectCheckpoint`）。服务端本来就存整份载荷，
+     * `validate_document` 按 schema 号校验，版本链这一侧不再把项目文档压成一张画布。
+     */
+    doc: FigureDocument | ProjectDocument
     canvasId?: string
     canvasName?: string
   },
   pj?: string | null,
-  opts?: { format: 'v4'; identity: VersionCanvasIdentity },
-) => {
-  const format = opts?.format
-  return documentJsonFetch(format)<{ version?: LayoutVersionMeta; skipped?: boolean }>(
+) =>
+  jsonFetch<{ version?: LayoutVersionMeta; skipped?: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(opts ? { ...payload, doc: chartVersionProject(payload.doc, opts.identity) } : payload),
+      body: JSON.stringify(payload),
     },
     pj,
   )
-}
 
 export const updateVersion = (
   docId: string,
   vid: string,
   /** `name` 非空 = 命名 / 改名；`named: false` = 删掉名字，变回普通节点 */
   patch: { name?: string; named?: false; description?: string; auto?: boolean },
-  format?: DocumentFormat,
 ) =>
-  documentJsonFetch(format)<{ version: LayoutVersionMeta }>(
+  jsonFetch<{ version: LayoutVersionMeta }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     {
       method: 'PATCH',
@@ -2008,14 +1969,14 @@ export const updateVersion = (
     },
   )
 
-export const duplicateVersion = (docId: string, vid: string, format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ version: LayoutVersionMeta }>(
+export const duplicateVersion = (docId: string, vid: string) =>
+  jsonFetch<{ version: LayoutVersionMeta }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/duplicate`,
     { method: 'POST' },
   )
 
-export const deleteVersion = (docId: string, vid: string, format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ ok: boolean }>(
+export const deleteVersion = (docId: string, vid: string) =>
+  jsonFetch<{ ok: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     { method: 'DELETE' },
   )
@@ -2133,7 +2094,42 @@ interface ExportBox {
 type ExportDash = 'dashed' | 'dotted' | 'longdash' | 'dashdot' | 'longdashdot'
 type ExportHeadType = 'none' | 'triangle' | 'open' | 'bar' | 'dot' | 'diamond' | 'stealth'
 
-export type ExportObject =
+export type ExportObject = ExportObjectBody & {
+  /**
+   * 剪切蒙版（ADR 0191）：裁这个对象的蒙版轮廓，外 → 内。蒙版一律以路径的几何发（形状先换成等价路径，
+   * `lib/clipMask.maskAsPath`）；没有就不发——不带剪切组的文档载荷与以前逐字节一致
+   */
+  clip?: ExportClipPath[]
+}
+
+/** 蒙版轮廓：只有几何（比例坐标的锚点 + 框 + 旋转），后端 `plan._clipped` 读 */
+export type ExportClipPath = ExportBox & {
+  type: 'path'
+  subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+  fill_rule?: 'evenodd'
+  rotation_deg?: number
+}
+
+type ExportObjectBody =
+  | (ExportBox & {
+      /** 路径文字（ADR 0190）：一行字沿自带的路径排开，后端 `rendercore/pathtext` 落字 */
+      type: 'pathText'
+      text: string
+      size_pt: number
+      bold: boolean
+      italic: boolean
+      color: string
+      font_family?: 'serif' | 'sans-serif' | 'monospace'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      start_offset?: number
+      text_align?: 'center' | 'end'
+      flip?: true
+      /** 离线（pt）；缺席 = 自动 */
+      baseline_offset_pt?: number
+      /** 一起成组的那条线的描边宽度（pt）；0 不发 */
+      line_width_pt?: number
+      rotation_deg?: number
+    })
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot
@@ -2197,6 +2193,15 @@ export type ExportObject =
       /** 线端 / 拐角；缺省 = 圆头 / 圆角 */
       line_cap?: 'butt' | 'round' | 'square'
       line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
+      stroke_align?: 'center' | 'outside' | 'inside'
+      /** 填充 / 描边渐变（ADR 0186）：`lib/gradient.readGradient` 读过的那份；没有 / 不生效不发 */
+      fill_gradient?: ReadGradient
+      stroke_gradient?: ReadGradient
       rotation_deg?: number
     })
   | (ExportBox & {
@@ -2210,6 +2215,8 @@ export type ExportObject =
       fill: string | null
       corner_radius_mm?: number
       sides?: number
+      /** 星形内径比；缺省 0.382 */
+      star_ratio?: number
       fill_opacity?: number
       dash?: ExportDash
       /** 无边框（只发 `false`；缺省 = 有描边；直线 / 大括号忽略） */
@@ -2217,6 +2224,47 @@ export type ExportObject =
       stroke_opacity?: number
       line_cap?: 'butt' | 'round' | 'square'
       line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
+      stroke_align?: 'center' | 'outside' | 'inside'
+      /** 填充 / 描边渐变（ADR 0186）：`lib/gradient.readGradient` 读过的那份；没有 / 不生效不发 */
+      fill_gradient?: ReadGradient
+      stroke_gradient?: ReadGradient
+      rotation_deg?: number
+    })
+  | (ExportBox & {
+      /** 自由路径（ADR 0185）：子路径的锚点 / 手柄是包围盒比例坐标；画法在 `rendercore/geometry.path_paths` */
+      type: 'path'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      /** 缺省 nonzero */
+      fill_rule?: 'evenodd'
+      stroke_pt: number
+      color: string
+      fill: string | null
+      fill_opacity?: number
+      dash?: ExportDash
+      /** 无描边（只发 `false`） */
+      stroke?: false
+      stroke_opacity?: number
+      line_cap?: 'butt' | 'round' | 'square'
+      line_join?: 'miter' | 'bevel' | 'round'
+      /** 斜接上限；缺省 10 */
+      miter_limit?: number
+      /** 自定义虚线（pt）；有它就不看 dash */
+      dash_pattern?: number[]
+      /** 描边对齐：形状发 center / outside（缺省内侧），路径发 inside / outside（缺省居中，ADR 0185 M2）；箭头不发 */
+      stroke_align?: 'center' | 'outside' | 'inside'
+      /** 填充 / 描边渐变（ADR 0186）：`lib/gradient.readGradient` 读过的那份；没有 / 不生效不发 */
+      fill_gradient?: ReadGradient
+      stroke_gradient?: ReadGradient
+      /** 端型只对开放子路径生效；缺省 = 无 */
+      head_start?: ExportHeadType
+      head_end?: ExportHeadType
+      head_size_start?: 'small' | 'large'
+      head_size_end?: 'small' | 'large'
       rotation_deg?: number
     })
 
@@ -2230,6 +2278,8 @@ export type ExportObject =
 /** `scope=original` 的一张图的来源（`original` 段，以及多页 PDF 里每一页）。**没有 x/y/w/h，也没有页面尺寸** */
 export type ExportOriginalSource = ArtifactRequestFields & {
   figure_id: string
+  /** 裁这张图的剪切蒙版轮廓（ADR 0191），外 → 内；没有就不发 */
+  clip?: ExportClipPath[]
   figure_snapshot?: FigureSnapshot
   figure_origin?: FigureOrigin
   chart?: PanelChartState
@@ -2326,6 +2376,15 @@ export interface ArtifactManifestSummary {
   identity?: ArtifactIdentity | null
   /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
   provenance?: ArtifactProvenance | null
+  /** 成品实测字号（`checks.text_size` 的依据，ADR 0203）：原因码 + 量到的最小字号 + 规范下限；老服务端没有 */
+  text_size?: ArtifactTextSize | null
+}
+
+export interface ArtifactTextSize {
+  /** `below_min` / `ok` / `no_threshold` / `not_observed` / `budget` / `no_reader` / `no_text` / `unmeasured_runs` */
+  reason: string
+  min_pt: number | null
+  floor_pt: number | null
 }
 
 export interface ArtifactIdentity {
@@ -2562,6 +2621,42 @@ export const fetchSourceFontBytes = async (sha256: string, face: number): Promis
   return res.arrayBuffer()
 }
 
+/** 外部 SVG 导入（ADR 0189）：后端 `rendercore/svgimport` 的结果。`unsupported` 非空 = 有做不准的东西，整个当图片放 */
+export interface SvgImportResult {
+  ok: boolean
+  error?: string
+  objects?: unknown[]
+  size_mm?: [number, number]
+  unsupported?: Record<string, number>
+}
+export const importSvg = (svg: string) =>
+  jsonFetch<SvgImportResult>('/api/svg/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ svg }),
+  })
+
+/** 复制为 SVG（ADR 0189）：导出 SVG 的同一个写入器写出来的一段 SVG 文本 */
+export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =>
+  jsonFetch<{ ok: boolean; svg?: string; error?: string }>('/api/svg/copy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects, w_mm, h_mm }),
+  })
+
+/** 文字转轮廓（ADR 0189）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
+export interface TextOutlineResult {
+  ok: boolean
+  /** 路径文字另带 `auto_offset_pt`：自动离线算出来是多少（ADR 0190） */
+  results: ({ paths: unknown[]; auto_offset_pt?: number; overflow?: boolean } | { error: string })[]
+}
+export const outlineText = (objects: ExportObject[]) =>
+  jsonFetch<TextOutlineResult>('/api/text/outline', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects }),
+  })
+
 export const typesetMath = (items: { src: string; family: string }[]) =>
   jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
     method: 'POST',
@@ -2576,8 +2671,8 @@ export interface PackageResult {
   url: string
   assets: number
   missing: string[]
-  document_format?: 'v4'
   chart_sources?: number
+  missing_chart_sources?: string[]
   execution_coverage?: {
     state: 'incomplete' | 'complete'
     issues: { script: string; reason: string }[]
@@ -2588,23 +2683,16 @@ export const createPackage = async (
   stem: string,
   doc: FigureDocument | ProjectDocument,
   settings: Record<string, unknown>,
-  opts?: { format?: DocumentFormat; pj?: string | null },
-) => {
-  const init = {
+  opts?: { pj?: string | null },
+) =>
+  jsonFetch<PackageResult>('/api/package', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stem, doc, settings }),
-  }
-  if (!opts) return jsonFetch<PackageResult>('/api/package', init)
-  const result = await documentJsonFetch(opts.format)<PackageResult>('/api/package', init, opts.pj)
-  if (opts.format === 'v4' && result.document_format !== 'v4') {
-    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
-  }
-  return result
-}
+  }, opts?.pj)
 
 export interface PackageOpenResult {
-  /** 旧包 schema 2 / 新包 schema 3；switchDocument 统一迁移 */
+  /** 旧包 schema 2 / 新包 schema 3 / 带计算图表的 schema 4；switchDocument 统一迁移 */
   doc: FigureDocument | ProjectDocument
   manifest: {
     created_at?: string
@@ -2617,6 +2705,13 @@ export interface PackageOpenResult {
   missing: string[]
   /** 存在但内容与打包时不一致（sha1 漂移） */
   drifted: string[]
+  /**
+   * schema 4 的来源附件没能装进当前项目（包损坏 / 项目只读）：这次包不完整，
+   * 打开入口明确报告失败。缺省 = 旧后端没有提供此事实。
+   */
+  missing_chart_sources?: string[]
+  /** 后端逐面板核实的完整附件引用，只有这些面板免于普通素材重链接。 */
+  verified_chart_sources?: ChartSourceRef[]
 }
 
 /**
@@ -2674,106 +2769,6 @@ export function openPackage(file: File): Promise<PackageOpenResult> {
   form.append('package', file)
   return jsonFetch<PackageOpenResult>('/api/package/open', { method: 'POST', body: form })
 }
-
-export interface ProjectPackageWarning {
-  reason: string
-  id: string
-}
-
-/** 显式v4检视事实；普通包仍由原openPackage消费。 */
-export interface ProjectPackageInspection {
-  document_format: 'v4'
-  doc: ProjectDocument
-  manifest: Record<string, unknown>
-  resources: { target: string; record: Record<string, unknown> }[]
-  missing: string[]
-  warnings: ProjectPackageWarning[]
-  figure_snapshots: number
-  execution_coverage: PackageResult['execution_coverage'] | null
-  captured_inputs?: Record<string, unknown>[]
-}
-
-/** 资源、配置及正文分别提交；503也可能携带已经发布的真实目录。 */
-export interface ProjectPackageInstallation {
-  state: 'resources_installed' | 'publication_unconfirmed' | 'installation_unconfirmed'
-  path: string
-  document_format: 'v4'
-  doc: ProjectDocument
-  references: unknown[]
-  execution: Record<string, unknown> | null
-  remap_fingerprint: string
-  missing: string[]
-  warnings: ProjectPackageWarning[]
-  execution_coverage: PackageResult['execution_coverage'] | null
-  configuration: 'pending' | 'needs_review' | 'ready'
-  configuration_review: {
-    version: 1
-    existing_local_metadata: boolean
-    workdir: WorkdirState | null
-    defaults: { script: string; selection: Record<string, unknown> | null; unavailable_code: string | null }[]
-    issues: { reason: string; script: string | null }[]
-  }
-  document_saved: false
-  configuration_error?: string
-  upload_cleanup?: 'pending'
-}
-
-export interface ProjectPackageInstallOptions {
-  destination: string
-  remap_rules?: Pick<InputRemapRule, 'kind' | 'from' | 'to'>[]
-}
-
-function isProjectPackageInstallation(value: unknown): value is ProjectPackageInstallation {
-  if (!value || typeof value !== 'object') return false
-  const body = value as Partial<ProjectPackageInstallation>
-  return body.document_format === 'v4' && body.doc?.schema === 4
-    && typeof body.path === 'string' && body.path.length > 0
-    && ['resources_installed', 'publication_unconfirmed', 'installation_unconfirmed'].includes(body.state ?? '')
-    && ['pending', 'needs_review', 'ready'].includes(body.configuration ?? '')
-    && body.document_saved === false && Array.isArray(body.missing) && Array.isArray(body.warnings)
-}
-
-export async function inspectProjectPackage(file: File, pj: string | null): Promise<ProjectPackageInspection> {
-  const form = new FormData()
-  form.append('package', file)
-  const result = await jsonFetch<ProjectPackageInspection>(
-    '/api/documents/v4/package/inspect', { method: 'POST', body: form }, pj, 'v4',
-  )
-  if (!result || typeof result !== 'object' || result.document_format !== 'v4' || result.doc?.schema !== 4) {
-    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
-  }
-  return result
-}
-
-export async function installProjectPackage(
-  file: File, options: ProjectPackageInstallOptions, pj: string | null,
-): Promise<ProjectPackageInstallation> {
-  const form = new FormData()
-  form.append('package', file)
-  form.append('options', JSON.stringify({
-    destination: options.destination,
-    ...(options.remap_rules === undefined ? {} : {
-      remap_rules: options.remap_rules.map(({ kind, from, to }) => ({ kind, from, to })),
-    }),
-  }))
-  try {
-    const result = await jsonFetch<ProjectPackageInstallation>(
-      '/api/documents/v4/package/install', { method: 'POST', body: form }, pj, 'v4',
-    )
-    if (!isProjectPackageInstallation(result)) {
-      throw new ApiError('Unexpected installation receipt.', 400, { code: 'invalid_document', receipt: result })
-    }
-    return result
-  } catch (error) {
-    // A known published tree is recoverable state, not permission to retry the
-    // same destination. Keep the original phase receipt for the dialog.
-    if (error instanceof ApiError && error.status === 503 && isProjectPackageInstallation(error.body)) {
-      return error.body
-    }
-    throw error
-  }
-}
-
 
 /* --------------------------- 参数化渲染引擎 -------------------------------- */
 
@@ -2975,6 +2970,9 @@ export interface SpineGeom {
   ticks: boolean
   from: [number, number]
   to: [number, number]
+  /** 线宽（pt）与真实绘制次序：只给外部审阅页把边框线当独立目标用，画布不读 */
+  stroke_pt?: number
+  paint_order?: number
 }
 
 /**
@@ -3028,6 +3026,20 @@ export interface ManifestTextBlock {
   /** 度，逆时针为正 */
   rotation: number
   ha: 'left' | 'center' | 'right'
+}
+
+/** `ManifestElement.scale_domain` 的一维（`engine/manifest.SCALE_DOMAIN_STATUSES` 是 `status` 的闭集）。 */
+export interface ScaleDomainFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  nonpositive?: number
+  errorbar_low_nonpositive?: number
+}
+
+/** `ManifestElement.bar_baseline` 的一维（`engine/manifest.BAR_BASELINE_STATUSES` 是 `status` 的闭集）。 */
+export interface BarBaselineFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  /** 有共同基线的柱容器：底相同的合并、柱数相加，按首次出现排序；数值不舍入 */
+  baselines?: { value: number; bars: number }[]
 }
 
 export interface ManifestElement {
@@ -3118,6 +3130,20 @@ export interface ManifestElement {
    * imshow 位图就是这样贴合宿主 axes 的：拖它等于拖宿主子图。
    */
   geom_gid?: string
+  /**
+   * 对数轴上「画不出来的值」的只读事实（V-001 `log-axis-nonpositive`）：只在 axes 元素、且某一维尺度是 `log`
+   * 时出现（色条轴 / 3D 轴不发）。`nonpositive` 数线 / 散点上有限且 ≤ 0 的坐标，`errorbar_low_nonpositive`
+   * 数下端 ≤ 0 的误差线；`status` 不是 `ok`（超预算 / 量不了）时没有计数，预检不判。产生者只有
+   * `engine/manifest.scale_domain`；消费者只有 `lib/preflight.ts` 的 `checkLogAxisNonpositive`。
+   */
+  scale_domain?: Partial<Record<'x' | 'y', ScaleDomainFact>>
+  /**
+   * 柱的共同基线的只读事实（V-002 `bar-baseline-truncated`）：只在 axes 元素、且这根直角坐标轴上有可见的柱时
+   * 出现；竖柱记 `y`、横柱记 `x`。浮动柱 / 堆叠的上层没有共同基线，不进 `baselines`。只有基线——范围与尺度
+   * 由预检从本元素的 `xlim` / `ylim` / `xscale` / `yscale` 读。产生者只有 `engine/manifest.bar_baseline`；
+   * 消费者只有 `lib/preflight.ts` 的 `checkBarBaselineTruncated`。
+   */
+  bar_baseline?: Partial<Record<'x' | 'y', BarBaselineFact>>
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
@@ -3215,6 +3241,11 @@ export interface ManifestElement {
    */
   arrow_endpoints?: [number, number][]
   /**
+   * 位置不是数据的线（引线、分隔线）每个顶点此刻落在哪（figure 分数、top-origin）。有它的线按段 / 按点拖，
+   * 整条平移也写 `points_frac`（全部顶点，摊平）；数据曲线与顶点太多的长线没有（ADR 0100 修订 2026-11-19）。
+   */
+  line_points?: [number, number][]
+  /**
    * 端点箭头（有 `arrow_endpoints`、不出 geometry）与按 bbox 命中的文字 / 图例类的真实绘制次序，语义同 `ElementGeometry.paint_order`。
    * 缺席 = 次序未知，不判遮挡。
    */
@@ -3226,6 +3257,13 @@ export interface ManifestElement {
    * `visible` 是边框线本身，`ticks` 是这一侧的主刻度线——两件事分开报。
    */
   spines?: Partial<Record<SpineSide, SpineGeom>>
+  /**
+   * 直角坐标轴上**画出来**的网格线 / 刻度线（按轴成组的描边多路径，figure 分数、y 向下）。
+   * 只给外部审阅页点选用（ADR 0187 修订 2026-11-17）：画布不据此建任何可选元素，只用来给审阅意见的圆点找落点。
+   * 没开网格 / 刻度线全关的那条轴没有对应键。
+   */
+  grid?: Partial<Record<'x' | 'y', ElementGeometry>>
+  tickmarks?: Partial<Record<'x' | 'y', ElementGeometry>>
   /**
    * 图例项的身份（ADR 0034）：原始序号、图中源对象的 gid、脚本原样的绑定。
    * 只有图例**项**有（图例标题没有）。`source_gid` 缺席 = 没有源——界面显示
@@ -3737,6 +3775,181 @@ export async function engineSpecfix(
   return body as unknown as SpecFixResponse
 }
 
+/** 一键排版（ADR 0199）的请求体；字段形状与 `app.api_pro_quick_layout_plan` 一一对应 */
+export interface QuickLayoutRequest {
+  /** `key` = 画布上的面板对象 id；`id` = `panel.fileId`（与 engineSpecfix 同一个 id）；`patches` = 此刻的全量覆盖列表（B0） */
+  panels: { key: string; id: string; patches: unknown[]; box: [number, number, number, number] }[]
+  /** 不能改图幅的面板（非图、旋转 / 翻转、位图）：只当障碍物 / 固定盒子 */
+  fixed: { key: string; box: [number, number, number, number] }[]
+  page: { w: number; h: number; margin: number }
+  target: 'single' | 'double' | 'page'
+  gap_mm: number
+  profile: unknown
+  label_pt: number
+  /** 同时按规范修文字和线条（工具条小下拉里的开关） */
+  fix_spec: boolean
+  /** 列数；null = 按各图现在大致的摆放位置认行列（互相压住时后端退回自动网格） */
+  columns: number | null
+  /** keep = 在当前页面 w×h 里排；fit = 页宽 = 目标期刊宽、页高跟着内容 */
+  canvas: 'keep' | 'fit'
+  /**
+   * 拖分隔线得到的行 / 列相对权重（图框尺寸的占比）；`rows_mm` = 每行图框的绝对高度（mm，取自预览框），
+   * 求解器原样采用，保证结果与松手前的预览一致
+   */
+  ratios?: { cols?: number[]; rows?: number[]; rows_mm?: number[] }
+}
+
+export type QuickLayoutFailureCode =
+  | 'not_licensed'
+  | 'unavailable'
+  | 'too_few'
+  | 'invalid_plan'
+  | 'not_converged'
+  | 'render_failed'
+  | 'page_too_small'
+
+/** 求解器回的网格：行列数、每张图（画布对象 id）在哪一格、行 / 列相对权重 */
+export interface QuickLayoutGrid {
+  rows: number
+  cols: number
+  cells: Record<string, [number, number]>
+  col_ratios: number[]
+  row_ratios: number[]
+}
+
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
+
+/** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
+export type QuickLayoutSpecChange =
+  | 'font_family'
+  | 'font_size'
+  | 'line_width'
+  | 'tick_direction'
+  | 'legend_frame'
+  | 'text_weight'
+  | 'other'
+
+export type QuickLayoutResponse =
+  | {
+      ok: true
+      panels: { key: string; patches: { gid: string; prop: string; value: unknown }[]; box: [number, number, number, number] }[]
+      labels: { key: string; x: number; y: number }[]
+      notes: { code: QuickLayoutNoteCode; ref: string }[]
+      spec_changes: QuickLayoutSpecChange[]
+      /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
+      page: { w: number; h: number }
+      /** 网格（拖分隔线重排用）；后端说不出 = null */
+      grid: QuickLayoutGrid | null
+      replay_required: boolean
+    }
+  | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
+
+const isBox = (v: unknown): v is [number, number, number, number] =>
+  Array.isArray(v) && v.length === 4 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
+
+const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
+  'not_licensed',
+  'unavailable',
+  'too_few',
+  'invalid_plan',
+  'not_converged',
+  'render_failed',
+  'page_too_small',
+])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
+  'font_family',
+  'font_size',
+  'line_width',
+  'tick_direction',
+  'legend_frame',
+  'text_weight',
+  'other',
+])
+
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1
+const isWeights = (v: unknown, n: number): boolean =>
+  Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number' && Number.isFinite(x) && x > 0)
+
+/** `grid`：null / 缺席都行（后端说不出网格）；给了就必须自洽，否则整份当形状不对 */
+function isQuickLayoutGrid(g: unknown): boolean {
+  if (g === null || g === undefined) return true
+  if (!isRec(g) || !isCount(g.rows) || !isCount(g.cols) || !isRec(g.cells)) return false
+  const rows = g.rows
+  const cols = g.cols
+  return (
+    isWeights(g.col_ratios, cols) &&
+    isWeights(g.row_ratios, rows) &&
+    Object.values(g.cells).every(
+      (rc) =>
+        Array.isArray(rc) &&
+        rc.length === 2 &&
+        Number.isInteger(rc[0]) && rc[0] >= 0 && rc[0] < rows &&
+        Number.isInteger(rc[1]) && rc[1] >= 0 && rc[1] < cols,
+    )
+  )
+}
+
+/** 成功体 / 失败体的形状核对：形状不对 = 没拿到，不是「排好了」 */
+function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
+  if (body.replay_required !== undefined && typeof body.replay_required !== 'boolean') return false
+  if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
+  return (
+    body.ok === true &&
+    isQuickLayoutGrid(body.grid) &&
+    Array.isArray(body.panels) &&
+    body.panels.every(
+      (p) =>
+        isRec(p) &&
+        isStr(p.key) &&
+        isBox(p.box) &&
+        Array.isArray(p.patches) &&
+        p.patches.every((x) => isRec(x) && isStr(x.gid) && isStr(x.prop) && 'value' in x),
+    ) &&
+    Array.isArray(body.labels) &&
+    body.labels.every(
+      (l) => isRec(l) && isStr(l.key) && typeof l.x === 'number' && Number.isFinite(l.x) && typeof l.y === 'number' && Number.isFinite(l.y),
+    ) &&
+    isRec(body.page) &&
+    typeof body.page.w === 'number' && Number.isFinite(body.page.w) && body.page.w > 0 &&
+    typeof body.page.h === 'number' && Number.isFinite(body.page.h) && body.page.h > 0 &&
+    Array.isArray(body.notes) &&
+    body.notes.every((n) => isRec(n) && isStr(n.code) && QUICK_LAYOUT_NOTES.has(n.code) && isStr(n.ref)) &&
+    Array.isArray(body.spec_changes) &&
+    body.spec_changes.every((c) => isStr(c) && QUICK_LAYOUT_SPEC_CHANGES.has(c))
+  )
+}
+
+/**
+ * 一键排版的方案（ADR 0199）：**只算不写**，回每张图最终的全量覆盖、新摆放与标签位置，由前端一次 commit。
+ * 失败体（`ok: false`）是正常返回；传输 / 形状不对才抛（调用方当「不知道」处理并重放）。
+ */
+export async function quickLayoutPlan(body: QuickLayoutRequest): Promise<QuickLayoutResponse> {
+  const res = await fetch(apiUrl('/api/pro/quick-layout/plan'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+  const out = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, out)
+    throw new EngineError(
+      (out.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+      (out.traceback as string) || '',
+      (out.code as string) || '',
+      (out.module as string) || '',
+      undefined,
+      undefined,
+      { params: out.params as Record<string, unknown> | undefined },
+    )
+  }
+  if (!isQuickLayoutResponse(out)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'bad_shape', '')
+  }
+  if (out.ok === true && out.grid === undefined) out.grid = null
+  return out as unknown as QuickLayoutResponse
+}
+
 /**
  * 作废这张图的热会话（QuickEdit「重新构建」）：下一次 `engineRender` 从头跑
  * 脚本。后端只让会话过期——不起 worker、不动源脚本、不写回、不清 override。
@@ -3813,7 +4026,7 @@ export async function fetchFigureSnapshotPreview(
 ): Promise<FigureSnapshotPreview> {
   if (!validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null) throw invalidFigureSnapshotPreview()
   const frozen = structuredClone(reference)
-  const res = await fetch(apiUrlFor('/api/documents/v4/figure-preview', pj), withProjectFor({
+  const res = await fetch(apiUrlFor('/api/figure-preview', pj), withProjectFor({
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, patches, figure_snapshot: frozen }), signal,
   }, pj))
@@ -4293,23 +4506,60 @@ export interface AiConnection {
   catalog_id?: string
   /** 连的是明文 http 的局域网模型服务器（只放行、界面提示一句） */
   insecure_lan?: boolean
-  /** state=error 时的原因码（unauthorized / network / timeout / …） */
+  /** state=error 时的原因码（unauthorized / network / timeout / endpoint_unusable / builtin_only / …） */
   error?: string
+  /** error=endpoint_unusable 时探测给出的主要原因（闭集，见 `AiProbeReason`） */
+  error_reason?: AiProbeReason
+  /** 内置循环说的对话协议；老后端没有 */
+  protocol?: AiWireProtocol | null
+  /** 保存 / 重新检查时真发过对话请求、地址与型号至今没变 */
+  protocol_checked?: boolean
   /** 只给诊断 / 测试看，界面不显示 */
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
   /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
   cli_update?: AiCliUpdate | null
 }
 
+/** 对话协议（后端 `ai_providers.protocol_of`） */
+export type AiWireProtocol = 'anthropic' | 'openai-responses' | 'openai-chat'
+
+/** 协议探测的失败原因闭集（后端 `ai_probe.REASONS`）；`ok` 只出现在逐协议的结论里 */
+export type AiProbeReason =
+  | 'ok'
+  | 'unauthorized'
+  | 'quota'
+  | 'no_model'
+  | 'wrong_protocol'
+  | 'network'
+  | 'web_page'
+  | 'bad_reply'
+
+/** 保存 / 重新检查后后端给的探测摘要（没有响应体） */
+export interface AiProbeSummary {
+  /** 拿到了结论（false = 断网 / 缺型号，记录没动） */
+  checked: boolean
+  protocol: AiWireProtocol | null
+  requested: AiWireProtocol | null
+  switched: boolean
+  /** 全不通时的主要原因；通了 / 没结论 = null */
+  reason: AiProbeReason | null
+  reasons: Record<string, AiProbeReason>
+}
+
 export interface AiConnectBody {
   /** 带已有连接 id = 换 Key / 换型号 */
   id?: string
-  vendor: string
-  api_key: string
+  /** 带 `id` 时可省：按已存记录自己的连接方式处理 */
+  vendor?: string
+  /** 带 `id`（换已存连接）时可省：沿用已存的 Key */
+  api_key?: string
   base_url?: string
   model?: string
+  /** 用户自己填的全部型号（后端去重、至多 50 项）；`model` 仍给默认的那一个 */
+  models?: string[]
   label?: string
-  wire?: 'anthropic' | 'openai-responses'
+  /** 缺省或 'auto' = 保存时自动探测协议；界面不让用户选 */
+  wire?: 'auto' | AiWireProtocol
 }
 
 export interface AiConnectResult {
@@ -4317,11 +4567,16 @@ export interface AiConnectResult {
   connection?: AiConnection
   /** 稳定原因码（ok=false 或保存了但试取型号失败时） */
   reason?: string
+  probe?: AiProbeSummary | null
 }
 
 /** 连接一个 Key 类厂商（保存前后端会试取一次型号清单） */
 export const connectAi = (body: AiConnectBody) =>
   jsonFetch<AiConnectResult>('/api/ai/connections', jsonPost(body))
+
+/** 重新探测一条 Key 连接的对话协议（会联网，最长约 30 秒）；订阅 / 账号登录类 404 */
+export const checkAiConnection = (id: string) =>
+  jsonFetch<AiConnectResult>(`/api/ai/connections/${encodeURIComponent(id)}/check`, jsonPost())
 
 /** 断开一个连接（订阅类不可删，只能在命令行里退出登录） */
 export const disconnectAi = (id: string) =>
@@ -4423,6 +4678,8 @@ export interface AiFixState {
   outcome: 'fixed' | 'not_fixed' | 'convert' | 'cancelled' | 'failed' | null
   /** 仅 `outcome === 'convert'`：要生成可编辑版本的脚本（项目相对路径）、画图用的位图库与报告里的原输出图（项目相对，可缺；ADR 0143 / 0149 §七） */
   handoff?: { kind: 'convert'; script: string; library: string; path: string | null }
+  /** 仅 `outcome === 'fixed'` 且 AI 改过运行参数：它定下的参数（填进脚本的「运行参数」再重跑验证；空数组 = 清掉） */
+  run_argv?: string[]
   summary: string
   /** 没修好、而最后的错误是「项目外文件夹读不了」（仅 Windows）：结果卡上「修复权限」的一次性不透明令牌（ADR 0153 修订）；没有就不出 */
   repair_token?: string
@@ -4557,6 +4814,44 @@ export const setConvertUnsandboxedWindows = (enabled: boolean) =>
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
+  })
+
+/** 「记住修好的做法」的一条（ADR 0197 第 3 层·在线；`engine/fixmemory.py`）。`fields` 按 `kind` 取用 */
+export interface FixMemoryEntry {
+  id: string
+  shape: string
+  kind: 'run_args' | 'launcher' | 'data_link' | 'execution'
+  fields: {
+    args?: string[]
+    env?: { name: string; value?: string }[]
+    text?: string
+    asked?: string
+    linked?: string
+    mode?: string
+  }
+  script: string
+  created: number
+  last_used: number
+  times: number
+}
+
+export interface FixMemoryState {
+  enabled: boolean
+  entries: FixMemoryEntry[]
+}
+
+export const fetchFixMemory = () => jsonFetch<FixMemoryState>('/api/ai/fix-memory')
+
+export const setFixMemoryEnabled = (enabled: boolean) =>
+  jsonFetch<FixMemoryState>('/api/ai/fix-memory', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
+export const deleteFixMemory = (id?: string) =>
+  jsonFetch<FixMemoryState>(id ? `/api/ai/fix-memory/${encodeURIComponent(id)}` : '/api/ai/fix-memory', {
+    method: 'DELETE',
   })
 
 export const fetchAiCapabilities = (refresh = false) =>
@@ -4893,11 +5188,13 @@ export interface AiDataFile {
 /** `POST /api/ai/data-figure` 的回应：`task` 是任务结局（同 `ai.done` 里的 task） */
 export interface AiDataFigureResult {
   task: {
-    task_id?: string
+    task_id?: string | null
     outcome: AiTaskSummary['outcome']
     verification?: { unmet?: { constraint_id: string; reason_code: string }[]; [k: string]: unknown }
     error?: string | null
     deduped?: boolean
+    /** 去重分支回的快照：原任务还在处理中是 false（此时 `outcome` 为 null、`task_id` 可为 null、没有 `script`） */
+    final?: boolean | null
     [k: string]: unknown
   }
   script?: string
@@ -4918,6 +5215,280 @@ export const aiDataFigure = (
   jsonFetch<AiDataFigureResult>(
     '/api/ai/data-figure',
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+/* ---------------- 数据出图 v2（ADR 0178）：数据清单 / 概览 / 出备选 / 提交 ---------------- */
+
+/** 文本表读得怎么样：`ok` 认得准、`unsure` 能读但哪一行是列名拿不准、`unreadable` 读不了（`code` 稳定码） */
+export interface AiDataTable {
+  status: 'ok' | 'unsure' | 'unreadable'
+  code: string | null
+  delimiter: 'comma' | 'tab' | 'semicolon' | 'space' | null
+  /** 「每列的名字」所在的物理行号（1 起；`unsure` 时是猜的） */
+  header_row: number | null
+  columns: number | null
+  rows: number | null
+  /** 只有 `unsure` 带：文件前若干行原文 */
+  preview?: { line: number; text: string }[]
+  /** 大表标记（读过之后才有；没读过的靠文件大小判断） */
+  large?: boolean
+}
+
+/** XLSX 的一张工作表；行列数 / status / code 全是 null = 没读（超出读取预算），不是读不了 */
+export interface AiDataSheet {
+  name: string
+  hidden: boolean
+  rows: number | null
+  columns: number | null
+  status: 'ok' | 'unreadable' | null
+  code: string | null
+}
+
+/** `GET /api/ai/data-files?formats=all` 的一项。`table: null` = 超出读取预算没读；`sheets: null` = 整本没读 / 读不开 */
+export interface AiDataFileEntry {
+  path: string
+  size: number
+  table?: AiDataTable | null
+  sheets?: AiDataSheet[] | null
+}
+
+export const aiDataFilesAll = (pj?: string | null) =>
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+
+export interface AiDataOverview {
+  path: string
+  sheet: string | null
+  status: 'ok' | 'unsure' | 'unreadable'
+  code: string | null
+  delimiter: AiDataTable['delimiter']
+  header_row: number | null
+  rows: number | null
+  columns: number | null
+  layout: string | null
+  fields: {
+    name: string
+    kind: 'numeric' | 'date' | 'text' | 'mixed'
+    numeric: number
+    text: number
+    empty: number
+    nan: number
+    id_like: boolean
+  }[]
+  preview_rows: { line: number; cells: string[] }[]
+  /** 大表（流式读 + 缩减）；小表没有这一项 */
+  large?: boolean
+  truncated: boolean
+  lead_lines: { line: number; text: string }[]
+  raw_lines: { line: number; text: string }[]
+}
+
+/** 一个数据文件（或 XLSX 的一张表）的概览；读不了不是 HTTP 错误（200 + `status: "unreadable"`） */
+export const aiDataOverview = (
+  q: { path: string; sheet?: string | null; headerRow?: number | null },
+  pj?: string | null,
+  signal?: AbortSignal,
+  requestId?: string,
+) => {
+  const qs = new URLSearchParams({ path: q.path })
+  if (requestId) qs.set('request_id', requestId)
+  if (q.sheet) qs.set('sheet', q.sheet)
+  if (q.headerRow != null) qs.set('header_row', String(q.headerRow))
+  return jsonFetch<AiDataOverview>(`/api/ai/data-overview?${qs}`, signal ? { signal } : undefined, pj)
+}
+
+/** 大表读表 / 出候选的真实进度（`GET /api/ai/data-progress/<请求号>`）：`none` = 还没开始 / 小表 / 不认识；`fraction` 为 null = 说不出比例（indeterminate） */
+export interface AiDataProgress {
+  state: 'none' | 'running' | 'done' | 'cancelled' | 'failed'
+  kind?: 'overview' | 'propose' | 'thumbnail' | 'commit'
+  fraction?: number | null
+  indeterminate?: boolean
+  /** 只有进行中的概览 / 出备选为真；缩略图与提交不可取消 */
+  cancellable?: boolean
+  elapsed_s?: number
+  /** 取消端点专有：这次是否真的把一个进行中的请求标成了取消 */
+  cancelled?: boolean
+}
+export const aiDataProgress = (rid: string, pj?: string | null) => jsonFetch<AiDataProgress>(`/api/ai/data-progress/${encodeURIComponent(rid)}`, undefined, pj)
+/** 取消（协作式、幂等）：原请求随后回 409 `propose_cancelled`；赛跑时以原请求的响应为准 */
+export const aiDataProgressCancel = (rid: string, pj?: string | null) =>
+  jsonFetch<AiDataProgress>(`/api/ai/data-progress/${encodeURIComponent(rid)}/cancel`, { method: 'POST' }, pj)
+
+/** 提问里一个选项：`code` + `params` 给文案，`answer` 原样并进下一次 propose 的 `answers` */
+export interface AiDataOption {
+  code: string
+  params: Record<string, string | number>
+  answer: Record<string, unknown>
+  free_text?: boolean
+}
+
+export interface AiDataMixedColumn {
+  column: string
+  non_numeric: number
+  rows: number
+  preview: { row: number; text: string; others: Record<string, string>; extract: number | null }[]
+  more: number
+  options: AiDataOption[]
+}
+
+export interface AiDataProposeItem {
+  id: string
+  title_code: string
+  why_code: string
+  recommended: boolean
+  coverage?: Record<string, unknown>
+  unplotted: { count: number; code: string | null }
+  /** 大表（超过 5 MiB / 10 万行的文本表）才有：整表 `rows` 行，这张图实际画的是缩减后的 `kept` 行；小表没有这一项 */
+  reduced?: { rows: number; kept: number }
+  /** 服务端给的相对路径；加项目标识要经 `aiDataThumbnailUrl` */
+  thumbnail_url: string
+  /** 懒模式 `pending`（缩略图在取图时才画）；旧模式 `ready` */
+  thumbnail_status?: 'pending' | 'ready'
+  /** 合画且文件里原本有分组列、文件内有多个取值时，候选成对出现（同一个 `title_code` / `why_code`）：`split` = 再按那一列分开，`by_file` = 只按文件比较；单份响应和没有这种列的合画没有这个键。`column` 是用户数据里的列名：只做文本渲染 */
+  variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
+}
+
+/** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
+export interface AiDataRoles {
+  x: string | null
+  y: string[]
+  group: string | null
+  facet: string | null
+  unit: string | null
+  /** 真 = 「把列当分组」（宽表每列一个条件 / 一次重复）：`y` 是被当分组的那几列，`x` / `group` 为 null；后端没给 = 不是 */
+  stack?: boolean
+  options: { x?: string[]; y?: string[]; group?: string[] }
+}
+
+/** 后端按规范实际用的图幅与字号（`figure_style`） */
+export interface AiDataFigureStyle {
+  width_single_mm: number
+  width_double_mm: number
+  font_pt: number
+  /** 后端接受的字号范围（可能缺：期刊没规定那一端） */
+  font_min_pt?: number
+  font_max_pt?: number
+}
+
+/** 懒模式响应里的公共部分（`candidates` 与 `nothing` 都有） */
+export interface AiDataLazyInfo {
+  render?: 'lazy'
+  table?: string
+  sheet?: string | null
+  /** 文本表是实际用的物理行号，XLSX 为 null */
+  header_row?: number | null
+  /** 合画：每份文件一项（后端合同 `sources`）：显示名 `label`（文件名去扩展名）与各自实际用的表头行 / 单位行 */
+  sources?: { path: string; sheet: string | null; label: string; header_row: number | null; units_row: boolean }[]
+  /** 真 = 表头后紧跟的单位行（`header_row + 1` 那一行）不是数据、已被切掉；缺失按 false */
+  units_row?: boolean
+  roles?: AiDataRoles | null
+  defaults?: { question_code: string; answer?: Record<string, unknown> }[]
+  /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */
+  mixed_cells?: { column: string; non_numeric: number; rows: number; mode: 'skip' | 'extract' }[]
+  /** 请求带了出版规范且有效时才有：这批图实际用的栏宽（mm）与正文字号（pt），界面如实显示、不另算 */
+  figure_style?: AiDataFigureStyle
+  /** 请求带的规范不合法、后端退回了默认规范（此时没有 `figure_style`） */
+  spec_fallback?: boolean
+  /** 连了自带 Key 的模型时才有（后端「读懂数据」后台任务，ADR 0178 第 1 步）：`pending` 就轮询 `aiDataUnderstanding`；`ready` 时建议内嵌；没有这个键 = 与从前一样 */
+  understanding?: AiDataUnderstanding
+}
+
+/**
+ * 「读懂数据」建议的 `answers`：可原样并进下一次 `propose` 的 `answers` 的补丁。`y` 可以是列名数组（2–3 列 = 有横轴、每列一条线；
+ * 2–8 列且 `x == 'none'` = 把列当分组，顺序即类别顺序）；`x_measure` = 规则选作横轴的那一列其实是测量值（不对应任何下拉）。其它键前端不认。
+ */
+export interface AiDataAnswerPatch {
+  x?: string
+  y?: string | string[]
+  group?: string
+  x_measure?: string
+  cells?: unknown
+  [k: string]: unknown
+}
+
+/** 「读懂数据」：`ready` 带模型对各列的判断换算出的建议（`answers`：`x` / `y` / `group` 取列名或 `none`，`y` 可为数组，另可能有 `x_measure` / `cells`）；`failed` 只有闭集 `reason`；`off` = 不存在 / 过期 / 别的项目，不是错误 */
+export interface AiDataUnderstanding {
+  id: string
+  state: 'pending' | 'ready' | 'failed' | 'off'
+  answers?: AiDataAnswerPatch
+  /** 表（相对路径）→ 表头物理行号 */
+  header_rows?: Record<string, number>
+  roles?: { column: string; role: string }[]
+  dropped?: number
+  reason?: string
+}
+
+export const aiDataUnderstanding = (id: string, pj?: string | null) =>
+  jsonFetch<AiDataUnderstanding>(`/api/ai/data-figure/understanding/${encodeURIComponent(id)}`, undefined, pj)
+
+export type AiDataProposeResponse =
+  | {
+      kind: 'ask'
+      question_code: string
+      /** 选择题的选项 + 可选的「不确定」；`mixed_cells` 没有这两项、给 `columns` */
+      options?: AiDataOption[]
+      unsure?: AiDataOption | null
+      columns?: AiDataMixedColumn[]
+    }
+  | ({ kind: 'candidates'; session: string; items: AiDataProposeItem[]; dropped: { reason_code: string }[] } & AiDataLazyInfo)
+  | ({ kind: 'nothing'; reasons: string[]; dropped?: { reason_code: string }[] } & AiDataLazyInfo)
+
+export interface AiDataProposeBody {
+  folder?: string
+  table?: string
+  sheet?: string
+  /** 合画一张：≥ 2 份表（每份文件是一组），与 `table` / `sheet` 二选一；其余字段同单份。几份列名不一致回 400 `tables_columns_differ`，份数超上限（最多 8 份）回 400 `tables_limit_exceeded` */
+  tables?: { path: string; sheet?: string }[]
+  answers?: Record<string, unknown>
+  header_rows?: Record<string, number>
+  client_request_id?: string
+  /** `lazy` = 文字先到、缩略图取图时才画、不返回选择题（列角色用 `answers.y / x / group`，`none` = 不要） */
+  render?: 'lazy'
+  /** 已按画布绑定解析好的出版规范全文（`resolveDocumentSpec(...).profile`，期刊覆盖已并入）：候选与落盘的图按它的栏宽与字号画；不给 = 默认规范，响应与从前逐字相同。规范不合法后端退回默认并回 `spec_fallback: true` */
+  spec?: Record<string, unknown>
+  /** 期刊自己规定的字号上下限（pt，只放规定了的那一端；都没规定 / 没有期刊绑定就不带这个键） */
+  font_range?: { min_pt?: number; max_pt?: number }
+}
+
+export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>
+  jsonFetch<AiDataProposeResponse>(
+    '/api/ai/data-figure/propose',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), ...(signal ? { signal } : {}) },
+    pj,
+  )
+
+/** 缩略图是 `<img>` 要直接请求的地址：`<img>` 发不了项目请求头，项目标识走查询串（`apiUrlFor`），钉在发起那一刻 */
+export const aiDataThumbnailUrl = (thumbnailUrl: string, pj: string | null) => apiUrlFor(thumbnailUrl, pj)
+
+export interface AiDataCommitResult {
+  task: AiDataFigureResult['task']
+  script?: string
+  stem?: string
+  module?: string
+  /** 没有它（去重的回应 / 没落盘）= 没核对过，不得当成已核对 */
+  data_check?: 'verified' | 'unverifiable' | 'mismatch' | 'unknown'
+  reason_code?: string
+  can_delete_script?: boolean
+  unplotted?: { count: number; rows: { row: number; column: string; reason: string }[]; code: string | null }
+  cells?: unknown
+  /** 大表：画出的是缩减后的点（同候选的 `reduced`）；界面不据此弹提示 */
+  reduced?: { rows: number; kept: number }
+}
+
+export const aiDataFigureCommit = (
+  body: { session: string; id: string; client_request_id: string },
+  pj?: string | null,
+) =>
+  jsonFetch<AiDataCommitResult>(
+    '/api/ai/data-figure/commit',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
+
+export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
+  jsonFetch<{ ok: boolean }>(
+    '/api/ai/data-figure/discard',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session }) },
     pj,
   )
 
@@ -8191,6 +8762,10 @@ export interface PreparationResultError {
     abi?: string
     current?: string
     ignore_token?: string
+    /** `image_format_mismatch`（TVD-3MWS）：扩展名所属格式、文件内容的真实格式、扩展名（不带点）；`file` 是项目相对显示名，敏感运行里可能没有 */
+    claimed?: string
+    actual?: string
+    ext?: string
     /** `interpreter_cache_denied`（TVD-B6MR）：一键「改用自带的 Python」要清哪一层选择；没有 = 失败的就是 Tavotto 自己的解释器，不给按钮 */
     switch?: 'global' | 'project' | 'both' | string
     /** `tex_*`（TeX 工具链，`texdiag.params_of`）：缺的命令 / 宏包文件名 / LaTeX 报错那一行，有才带 */
@@ -8823,7 +9398,8 @@ export interface ReviewShareSummary {
 }
 
 export type ReviewAnchor =
-  | { kind: 'element'; gid: string; box: ReviewBox }
+  /** `pt`：审阅者点在元素上的那一处（画面比例坐标，0.21.4 起的审阅网页才有） */
+  | { kind: 'element'; gid: string; box: ReviewBox; pt?: [number, number] }
   | { kind: 'region'; box: ReviewBox }
   | { kind: 'overall' }
 
@@ -8926,3 +9502,52 @@ export const reviewSnapshotUrl = (shareId: string, v: number) =>
 export const fetchReviewChanged = (shareId: string, render: ReviewRender) =>
   jsonFetch<{ changed: boolean }>('/api/review/changed', reviewPost({ share_id: shareId, render }))
 export const fetchReviewUnread = () => jsonFetch<ReviewUnread>('/api/review/unread')
+
+/* ------------------- 高级版授权（ADR 0193） -------------------
+ * 本机引擎的遥控器：`status` 纯本机；`activate` / `refresh` / `release` / `checkout` 会引出远程请求，只在用户点了才发。
+ * `enabled: false`（正式安装、`PRODUCTION_LIVE = False` 且没设测试端点）= 界面上完全不出现授权入口。 */
+
+export type LicenseFailureCode =
+  | 'invalid_code'
+  | 'device_limit'
+  | 'revoked'
+  | 'expired'
+  | 'price_unavailable'
+  | 'rate_limited'
+  | 'network'
+  | 'server'
+  | 'client_error'
+
+export type LicenseState = 'none' | 'active' | 'expired' | 'revoked' | 'lapsed'
+
+export type LicenseStatus =
+  | { enabled: false }
+  | {
+      enabled: true
+      licensed: boolean
+      state: LicenseState
+      features: string[]
+      /** 权益到期时刻（UTC 秒） */
+      exp: number | null
+      /** 打码后的邮箱（`m***@gmail.com`），只用于显示 */
+      email_hint: string
+      needs_refresh: boolean
+      /** 创始会员（令牌里签了席位号）：永久身份，过期也在，吊销时没有；常规授权没有这个键 */
+      founding?: { no: number; since: number; /** 刻在铭牌上的名字（只存本机；没刻 = 空串） */ name: string }
+    }
+
+const licenseBody = (body?: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body ?? {}),
+})
+
+export const fetchLicenseStatus = () => jsonFetch<LicenseStatus>('/api/license/status')
+export const activateLicense = (code: string) =>
+  jsonFetch<LicenseStatus>('/api/license/activate', licenseBody({ code }))
+export const setLicensePlateName = (name: string) =>
+  jsonFetch<LicenseStatus>('/api/license/plate-name', licenseBody({ name }))
+export const refreshLicense = () => jsonFetch<LicenseStatus>('/api/license/refresh', licenseBody())
+export const releaseLicense = () => jsonFetch<LicenseStatus>('/api/license/release', licenseBody())
+export const licenseCheckout = (lookupKey: string, locale: string, renew = false) =>
+  jsonFetch<{ ok: true; url: string }>('/api/license/checkout', licenseBody({ lookup_key: lookupKey, locale, renew }))

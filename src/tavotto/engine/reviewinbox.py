@@ -13,9 +13,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
+import os
 import re
 import shutil
 import threading
@@ -55,6 +57,91 @@ _OWNER_TOKEN = re.compile(r"^[A-Za-z0-9_-]{22,128}$")
 _TARGET_ID = re.compile(r"^[^\x00-\x1f]{1,512}$")
 
 _LOCK = threading.RLock()
+
+# ---------------------------------------------------------------------------
+# 跨进程锁（ADR 0205 §四）：桌面与插件的 MCP 进程可能同时写同一份 `shares.json`。
+# 写路径一律「进程内锁 → 文件锁 → 重新读盘 → 改 → 原子写回」；只读路径不加文件锁。
+# ---------------------------------------------------------------------------
+LOCK_NAME = "shares.lock"
+LOCK_TIMEOUT_S = 5.0
+_LOCK_POLL_S = 0.02
+#: 本进程持有文件锁的重入深度；只在持有 `_LOCK` 的线程里读写，所以不必另加锁
+_depth = 0
+
+
+def lock_path() -> Path:
+    return dir_path() / LOCK_NAME
+
+
+def _try_lock(fh) -> bool:
+    """非阻塞地试一次；拿到 True，被别的进程占着 False。"""
+    if os.name == "nt":
+        import msvcrt
+
+        fh.seek(0)
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, PermissionError):
+        return False
+    return True
+
+
+def _unlock(fh) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass  # 关文件时内核也会放
+
+
+@contextlib.contextmanager
+def file_lock(timeout: float | None = None):
+    """`review/shares.lock` 上的跨进程互斥（进程内可重入）。超时抛 `TimeoutError`（是 `OSError`）——
+    调用方按写盘失败处理，绝不跳过锁直接写。"""
+    global _depth
+    with _LOCK:
+        if _depth:
+            _depth += 1
+            try:
+                yield
+            finally:
+                _depth -= 1
+            return
+        p = lock_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            p.parent.chmod(0o700)
+        except OSError:
+            pass
+        fh = open(p, "a+b")  # noqa: SIM115 — 生命周期跨 yield
+        try:
+            deadline = time.monotonic() + (LOCK_TIMEOUT_S if timeout is None else timeout)
+            while not _try_lock(fh):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("review inbox lock timeout")
+                time.sleep(_LOCK_POLL_S)
+            _depth = 1
+            try:
+                yield
+            finally:
+                _depth = 0
+                _unlock(fh)
+        finally:
+            fh.close()
 
 
 def dir_path() -> Path:
@@ -128,8 +215,24 @@ def clean_anchor(raw: object) -> dict | None:
         return {"kind": "region", "box": box}
     gid = raw.get("gid")
     if kind == "element" and isinstance(gid, str) and 0 < len(gid) <= 256:
-        return {"kind": "element", "gid": gid, "box": box}
+        out: dict = {"kind": "element", "gid": gid, "box": box}
+        pt = _point(raw.get("pt"))
+        if pt is not None:
+            out["pt"] = pt  # 审阅者点在元素上的那一处（画面比例坐标）；老网页没有
+        return out
     return None
+
+
+def _point(value: object) -> list[float] | None:
+    """画面比例坐标的一个点 `[x, y]`，夹进 [0,1]²；不是两个有限数 None。"""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    out: list[float] = []
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        out.append(round(min(1.0, max(0.0, float(v))), 5))
+    return out
 
 
 def clean_reply(raw: object) -> dict | None:
@@ -219,14 +322,95 @@ def clean_verdict(raw: object) -> dict | None:
     return {"v": v, "decision": decision, "note": note, "author": author[:AUTHOR_MAX], "at": at}
 
 
+#: 元素表里的角色名（manifest `role`）：小写字母 + 下划线
+_ROLE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+_GEOM_KINDS = frozenset({"polyline", "path", "multi_path"})
+
+
+def _order(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def clean_geometry(raw: object) -> dict | None:
+    """元素的真实形状（与 manifest `geometry` 同形，ADR 0187 修订 2026-11-16）：只认已知字段，坐标须是有限数。
+    路径少于 2 个点的丢掉；一条都不剩 None（该元素退回按 bbox 点选）。"""
+    if not isinstance(raw, dict) or raw.get("kind") not in _GEOM_KINDS:
+        return None
+    paths: list[dict] = []
+    for p in raw.get("paths") if isinstance(raw.get("paths"), list) else []:
+        if not isinstance(p, dict) or not isinstance(p.get("points"), list):
+            continue
+        pts = [q for q in (_point_raw(v) for v in p["points"]) if q is not None]
+        if len(pts) >= 2 and len(pts) == len(p["points"]):
+            paths.append({"points": pts, "closed": p.get("closed") is True})
+    if not paths:
+        return None
+    out: dict = {
+        "kind": raw["kind"],
+        "paths": paths,
+        "fill": raw.get("fill") is True,
+        "stroke": raw.get("stroke") is True,
+    }
+    sp = raw.get("stroke_pt")
+    if (
+        isinstance(sp, (int, float))
+        and not isinstance(sp, bool)
+        and math.isfinite(sp)
+        and 0 <= sp <= 100
+    ):
+        out["stroke_pt"] = round(float(sp), 3)
+    clip = _box(raw.get("clip"))
+    if clip is not None:
+        out["clip"] = [round(v, 5) for v in clip]
+    order = _order(raw.get("paint_order"))
+    if order is not None:
+        out["paint_order"] = order
+    fa = raw.get("fill_alpha")
+    if isinstance(fa, (int, float)) and not isinstance(fa, bool) and 0 <= fa <= 1:
+        out["fill_alpha"] = round(float(fa), 3)
+    return out
+
+
+def _point_raw(value: object) -> list[float] | None:
+    """不夹值的点（路径点已由上传端裁进画面）。"""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    out: list[float] = []
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        out.append(float(v))
+    return out
+
+
 def clean_elements(raw: object) -> list[dict]:
+    """`[{gid, label, bbox}]` + 可选 `role` / `paint_order` / `arrow_endpoints` / `geometry`（点选细到真实形状，
+    ADR 0187 修订 2026-11-16）。多余字段一律丢。"""
     out: list[dict] = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
             continue
         gid, label, box = item.get("gid"), item.get("label"), _box(item.get("bbox"))
-        if isinstance(gid, str) and gid and len(gid) <= 256 and isinstance(label, str) and box:
-            out.append({"gid": gid, "label": label[:120], "bbox": box})
+        if not (
+            isinstance(gid, str) and gid and len(gid) <= 256 and isinstance(label, str) and box
+        ):
+            continue
+        el: dict = {"gid": gid, "label": label[:120], "bbox": box}
+        role = item.get("role")
+        if isinstance(role, str) and _ROLE.match(role):
+            el["role"] = role
+        order = _order(item.get("paint_order"))
+        if order is not None:
+            el["paint_order"] = order
+        ends = item.get("arrow_endpoints")
+        if isinstance(ends, list) and len(ends) == 2:
+            pts = [_point(v) for v in ends]
+            if all(pts):
+                el["arrow_endpoints"] = pts
+        geom = clean_geometry(item.get("geometry"))
+        if geom is not None:
+            el["geometry"] = geom
+        out.append(el)
     return out
 
 
@@ -354,7 +538,7 @@ def _remove_snapshots(share_id: str) -> None:
     shutil.rmtree(dir_path() / SNAPSHOT_DIR / share_id, ignore_errors=True)
 
 
-def _prune_locked(data: dict) -> None:
+def _prune_locked(data: dict, *, remove_files: bool = True) -> None:
     now = _now()
     keep = []
     for rec in data["shares"]:
@@ -366,7 +550,7 @@ def _prune_locked(data: dict) -> None:
     keep = keep[-MAX_SHARES:]
     live = {r["share_id"] for r in keep}
     for rec in data["shares"]:
-        if rec["share_id"] not in live:
+        if remove_files and rec["share_id"] not in live:
             _remove_snapshots(rec["share_id"])
     data["shares"] = keep
 
@@ -374,9 +558,20 @@ def _prune_locked(data: dict) -> None:
 def _load_pruned_locked() -> dict:
     data = _load_locked()
     before = len(data["shares"])
-    _prune_locked(data)
-    if len(data["shares"]) != before:
-        _save_locked(data)
+    probe = {"shares": list(data["shares"])}
+    _prune_locked(probe, remove_files=False)
+    if len(probe["shares"]) == before:
+        return data
+    # 修剪要写盘：读路径本身不加文件锁，要写才在锁里重读一次再修剪。拿不到锁就只给这次的内存视图，不落盘（下次再剪）。
+    try:
+        with file_lock():
+            data = _load_locked()
+            before = len(data["shares"])
+            _prune_locked(data)
+            if len(data["shares"]) != before:
+                _save_locked(data)
+    except OSError:
+        _prune_locked(data, remove_files=False)
     return data
 
 
@@ -521,7 +716,7 @@ def add_pending(
     }
     if not _valid_record(rec):
         return False
-    with _LOCK:
+    with file_lock():
         data = _load_pruned_locked()
         if _find(data, share_id) is not None:
             return True
@@ -542,7 +737,7 @@ def add_version(
     digest: str = "",
 ) -> dict | None:
     """一个版本 complete 之后：存元素表与快照、更新最新版本号与到期时间；首版同时把记录转正（`delivered`）。"""
-    with _LOCK:
+    with file_lock():
         data = _load_pruned_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -598,7 +793,7 @@ def snapshot_file(share_id: str, v: int) -> Path | None:
 
 
 def mark_revoked(share_id: str) -> bool:
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -610,7 +805,7 @@ def mark_revoked(share_id: str) -> bool:
 
 def forget(share_id: str) -> str:
     """删本机记录：`ok` / `missing` / `active`（还没 revoke 也没到期，不许删）。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -624,7 +819,7 @@ def forget(share_id: str) -> str:
 
 
 def mark_read(share_id: str) -> bool:
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -638,7 +833,7 @@ def mark_read(share_id: str) -> bool:
 def merge_feed(share_id: str, feed: dict) -> dict | None:
     """把一次 feed 合并进记录：新意见 / 回复 / 删除 / 结论 / 已处理，游标，到期与停止状态，未读数。
     返回合并后的记录拷贝；没有这份记录 None。`feed` 已由 `reviewshare` 验过顶层形状；事件逐条再清洗。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         if rec is None:
@@ -721,7 +916,7 @@ def _has(rec: dict, cid: object) -> dict | None:
 
 def apply_reply(share_id: str, comment_id: str, reply: dict) -> dict | None:
     """作者自己的回复（服务端 201 之后）：并进副本，不计未读。返回该条意见。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         r = clean_reply(reply)
@@ -738,7 +933,7 @@ def apply_reply(share_id: str, comment_id: str, reply: dict) -> dict | None:
 
 def apply_comment(share_id: str, comment: dict) -> dict | None:
     """服务端回的整条意见（PATCH resolved 之后）覆盖副本里的那一条。"""
-    with _LOCK:
+    with file_lock():
         data = _load_locked()
         rec = _find(data, share_id)
         c = clean_comment(comment)

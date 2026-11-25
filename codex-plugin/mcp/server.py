@@ -1377,7 +1377,13 @@ NORMAL_TOOLS = (
     "tavotto_close_session",
     "tavotto_guide",
     "tavotto_list_journals",
+    "tavotto_get_journal_facts",
     "tavotto_fix_to_journal",
+    "tavotto_make_journal_ready",
+    "tavotto_share_review",
+    "tavotto_review_feedback",
+    "tavotto_reply_review",
+    "tavotto_resolve_review",
 )
 
 

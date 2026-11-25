@@ -16,10 +16,9 @@ import { cn } from '@/lib/utils'
  */
 export const FIELD_BOX = cn(
   // 框里的值是「要读的字」：12px（正文档），标签 / caption / meta 留 11px（2026-09-14 审计分歧 1，用户拍板试 12）。
-  // 圆角默认 md；坐在胶囊（单行浮动条，祖先带 `data-capsule`）里换成全圆——胶囊套方角框，内外圆角不配
-  // （2026-10-13 用户：「这个输入框和胶囊的圆角不匹配」）
-  'rounded-md in-data-capsule:rounded-full border border-transparent bg-field text-sm text-ink transition-colors duration-fast',
-  'hover:bg-field-hover',
+  // 圆角默认 sm（6px，28px 高输入框的精密仪器比例，避免半胶囊发泡感）；坐在胶囊（单行浮动条，祖先带 `data-capsule`）里换成全圆
+  'rounded-sm in-data-capsule:rounded-full border border-border/65 bg-field text-sm text-ink transition-colors duration-fast',
+  'hover:border-border hover:bg-field-hover',
 )
 /**
  * 灰桌面（`bg-bg`）上的侧栏 / 抽屉子树里框的两个 token 改写（桌面子树唯一出处，LeftPanel 与 `DESK_DRAWER` 都从这里取）：
@@ -38,3 +37,6 @@ export const FIELD_OPEN = 'data-[state=open]:border-accent'
 export const FIELD_INVALID = 'border-danger hover:border-danger'
 /** 禁用态与 Button / Checkbox 同一档；hover 不再变色 */
 export const FIELD_DISABLED = 'cursor-not-allowed opacity-40 hover:bg-field'
+
+/** 套在 `Button` 上、长得和同列的下拉一样的触发器（选择器等不是 `Select` 却要和下拉并排的控件用）：同一个框、同高、同内边距，铺满剩余宽度 */
+export const fieldBoxTrigger = cn(FIELD_BOX, FIELD_OPEN, 'w-full rounded-sm px-2 active:bg-field data-[state=open]:bg-field')

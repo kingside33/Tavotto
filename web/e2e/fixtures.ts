@@ -1,6 +1,6 @@
 import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -88,6 +88,17 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
   if (!figures && !opts.noProject) {
     figures = path.join(workdir, 'figures')
     cpSync(path.join(REPO, 'examples', 'figures'), figures, { recursive: true })
+  }
+
+  // A fresh test user must not fetch a newer release and cover unrelated controls.
+  // Preserve supplied/shared settings; explicit "Check now" still uses force=1.
+  const configDir = opts.env?.TAVOTTO_CONFIG_DIR ?? path.join(workdir, 'config')
+  if (configDir) {
+    mkdirSync(configDir, { recursive: true })
+    const configFile = path.join(configDir, 'config.json')
+    if (!existsSync(configFile)) {
+      writeFileSync(configFile, JSON.stringify({ updates: { auto_check: false } }), 'utf8')
+    }
   }
 
   const port = opts.port ?? (await freePort())
@@ -249,7 +260,7 @@ export const ONBOARDING_FLOW_VERSION = 4
  * 卡片是窗口右下角的一张浮卡，拖边 / 平移 / 挪对象的用例会把它招出来、盖住右下角的东西。
  * 要测卡片的用例自己摆状态（`hint-cards.spec.ts`）。
  */
-export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides', 'shift_axis', 'no_snap', 'arrow_nudge', 'shift_rotate', 'dblclick_text', 'shift_draw', 'space_pan', 'shift_multi', 'shortcut_help'] as const
+export const CARD_HINTS = ['fit_canvas', 'edge_crop', 'ruler_guides', 'shift_axis', 'no_snap', 'arrow_nudge', 'shift_rotate', 'dblclick_text', 'shift_draw', 'space_pan', 'shift_multi', 'shortcut_help', 'quick_layout'] as const
 const CARDS_LEARNED = Object.fromEntries(CARD_HINTS.map((k) => [k, { shows: 0, lastAt: 0, done: true }]))
 
 const WELCOME_SEEN = JSON.stringify({

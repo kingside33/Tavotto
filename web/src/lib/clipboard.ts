@@ -1,3 +1,6 @@
+import { looksLikeSvg } from './svgImport'
+import { pasteSvgText } from '@/store/svgImportActions'
+import { remapGroupPath } from './groupTree'
 import { create } from 'zustand'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { intakePastedImages, pastedAssetFiles } from '@/lib/canvasFileIntake'
@@ -12,7 +15,8 @@ import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
-import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, LayoutGroup, PanelObject } from '@/types/document'
+import { sameRules } from '@/lib/specBinding'
 import { isRuntimePanel, objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
 import { DUPLICATE_OFFSET_MM } from '@/lib/units'
@@ -30,6 +34,7 @@ import { DUPLICATE_OFFSET_MM } from '@/lib/units'
 
 import { CLIPBOARD_FORMAT } from '@/lib/brand'
 import { clearAdoption } from '@/lib/artifactValidation'
+import { remapLineIds } from '@/lib/pathText'
 
 /**
  * 只认一个魔数。改名到 Tavotto 时旧魔数（`magplot/objects@1` 与更早的
@@ -241,7 +246,22 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
 export function handlePasteEvent(e: ClipboardEvent): boolean {
   const text = e.clipboardData?.getData('text/plain') ?? ''
   const payload = parsePayload(text)
-  if (!payload) return pasteImageFiles(e, text)
+  if (!payload) {
+    // 外部 SVG 标记（Illustrator / Inkscape 复制出来的，ADR 0189）：落成可编辑对象，做不准就整个当图片
+    // 两个口都要真像 SVG 才算（有的宿主对任何类型都回同一段文字）
+    const raw = e.clipboardData?.getData('image/svg+xml') ?? ''
+    const svg = looksLikeSvg(raw) ? raw : looksLikeSvg(text) ? text : ''
+    if (svg) {
+      return (
+        runDiscreteAction('canvas', e.target, () => {
+          e.preventDefault()
+          void pasteSvgText(svg)
+          return true
+        }) ?? false
+      )
+    }
+    return pasteImageFiles(e, text)
+  }
   // 桌面壳「编辑 → 粘贴」与预置 ⌘V 加速键直达这里，不经 keydown：先过离散动作闸门——
   // 输入框 / 对话框里让位（不收手势），否则先落定开着的连续编辑，粘贴不并进方向键
   // 微调那条撤销（Codex #671）
@@ -291,6 +311,8 @@ export interface MissingAsset {
   name: string
   /** 引用它的剪贴板面板数量 */
   count: number
+  /** 这次检视确需重链接的面板；同 fileId 的自包含图表不在其中。 */
+  panelIds?: string[]
   /** 用户选择：重新链接到哪个现有素材；undefined = 跳过 */
   relinkTo?: string
 }
@@ -335,18 +357,23 @@ function panelSourceKnown(p: PanelObject): boolean {
 }
 
 /** 项目包导入后：把当前文档里缺失素材的面板交给重链接对话框处理 */
-export function requestRelinkMissing(): number {
+export function requestRelinkMissing(verifiedChartSources: readonly ChartSourceRef[] = []): number {
   const { doc } = useDocumentStore.getState()
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
     if (o.type !== 'panel' || panelSourceKnown(o)) continue
+    if (o.chartSource && verifiedChartSources.some(ref => sameRules(ref, o.chartSource))) continue
     const cur = missingMap.get(o.fileId)
-    if (cur) cur.count += 1
+    if (cur) {
+      cur.count += 1
+      cur.panelIds!.push(o.id)
+    }
     else {
       missingMap.set(o.fileId, {
         fileId: o.fileId,
         name: o.name ?? o.fileId.split('/').pop() ?? o.fileId,
         count: 1,
+        panelIds: [o.id],
       })
     }
   }
@@ -385,12 +412,13 @@ export function materializeRelink(resolved: MissingAsset[], { keepEdits = false 
     useUiStore.getState().setStatus(note('relinkNone'), 'info')
     return
   }
-  const byFileId = new Map(relink.map((m) => [m.fileId, assets[m.relinkTo!]]))
+  const byFileId = new Map(relink.map((m) => [m.fileId, { asset: assets[m.relinkTo!], panelIds: m.panelIds }]))
   useDocumentStore.getState().commit(hist('relinkAssets', { count: relink.length }), (d) => {
     for (const o of d.objects) {
       if (o.type !== 'panel') continue
-      const info = byFileId.get(o.fileId)
-      if (!info) continue
+      const choice = byFileId.get(o.fileId)
+      if (!choice || (choice.panelIds && !choice.panelIds.includes(o.id))) continue
+      const info = choice.asset
       clearAdoption(o)
       o.fileId = info.id
       o.fileKind = info.kind
@@ -542,11 +570,11 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
     const nid = newId(src.type[0])
     idMap.set(src.id, nid)
     copy.id = nid
-    if (copy.groupId) {
-      const next = groupMap.get(copy.groupId) ?? newId('g')
-      groupMap.set(copy.groupId, next)
-      copy.groupId = next
-    }
+    remapGroupPath(copy, (g) => {
+      const next = groupMap.get(g) ?? newId('g')
+      groupMap.set(g, next)
+      return next
+    })
     if (copy.type === 'panel') {
       const target = relink.get(copy.fileId)
       if (target) {
@@ -577,6 +605,7 @@ export function materializePaste(payload: ClipPayload, resolved: MissingAsset[])
     }
     clones.push(copy)
   }
+  remapLineIds(clones, idMap)
 
   if (!clones.length) {
     useUiStore.getState().setStatus(note('pasteNothing'), 'error')

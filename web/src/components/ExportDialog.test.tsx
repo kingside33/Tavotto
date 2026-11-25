@@ -55,7 +55,7 @@ import { renderKey, useRenderStore } from '@/store/renderStore'
 import { statusDismissTimer, useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
-import { DEFAULT_PROFILE_ID } from '@/lib/profile'
+import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
 import { profileName } from '@/lib/profileText'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { aggregateBatch, applyExportJob, cancelCurrentExport, refreshExportStatus, resetExportState, runExport, useExportStore } from '@/store/exportStore'
@@ -468,7 +468,7 @@ describe('信息架构：删掉的东西不许回来', () => {
       'checks',
     ])
     expect(group('checks').textContent).toContain('样式检查报告')
-    expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
+    expect(group('checks').querySelector('[aria-label="导出后逐项复核成稿"]')).not.toBeNull()
     // 两个开关收进唯一一个默认折叠的「高级」（2026-10-31 UI 审计）；开关仍在「检查」组里、请求字段不变。
     // 严格核验已开 / 报告被规范强制时它默认展开，已生效的设置不会被藏起来
     const adv = [...document.body.querySelectorAll('details')].filter((d) => d.textContent!.includes('样式检查报告'))
@@ -1501,6 +1501,9 @@ describe('来源读后端 route（#1209）', () => {
   })
 
   it('重开对话框：新 route 到之前读到的是「没有 route」，不拿旧 offers 禁用 / 放开 EPS', async () => {
+    // 让重开后那次 validate 一定晚于本用例的断言：否则快机器上 act 会把回包一起冲掉，
+    // 断言读到的是新 route，测不到「旧 offers 不能当退路」这件事。
+    routeDelayMs = 50
     routeOf = (req) => ({
       scope: req.scope,
       formats: req.formats,
@@ -1625,6 +1628,55 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.className).toContain('text-danger')
   })
 
+  // 成品实测字号（ADR 0203）：唯一带数的一项——失败时说出界面上显示的两个数；
+  // 通过、没规范（not_applicable）、量不全（unknown）都不画（核验只说失败，2026-11-06）
+  const sized = (verdict: string, textSize: Record<string, unknown> | undefined) => ({
+    ...manifest({ integrity: 'verified', size: 'verified', text_size: verdict }),
+    ...(textSize ? { text_size: textSize } : {}),
+  })
+
+  it('字号 failed：一句话说出最小的字和规范下限，不只报名字', async () => {
+    jobOutputs = [output(sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 5 }))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.dataset.inspection).toBe('failed')
+    expect(badge()?.textContent).toBe('成品里最小的文字是 4.9 pt，低于规范的 5 pt')
+  })
+
+  it('字号 failed 与别的项一起失败：同一行里两样都说', async () => {
+    jobOutputs = [
+      output({
+        ...sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 6 }),
+        checks: { integrity: 'verified', size: 'verified', dpi_tag: 'failed', text_size: 'failed' },
+      }),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：分辨率标签；成品里最小的文字是 4.9 pt，低于规范的 6 pt')
+  })
+
+  it('字号 failed 但老服务端没带读数：退回只报名字', async () => {
+    jobOutputs = [output(sized('failed', undefined))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：字号')
+  })
+
+  it.each([
+    ['verified', { reason: 'ok', min_pt: 7, floor_pt: 6 }],
+    ['not_applicable', { reason: 'no_threshold', min_pt: 4.9, floor_pt: null }],
+    ['unknown', { reason: 'unmeasured_runs', min_pt: 9, floor_pt: 6 }],
+  ] as const)('字号 %s（通过 / 没有规范 / 公式量不全）：都不画', async (verdict, ts) => {
+    jobOutputs = [output(sized(verdict, ts))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()).toBeNull()
+  })
+
   it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {
     const svg = (extra: Record<string, unknown>) => ({
       ...output(manifest({ integrity: 'verified', size: 'verified' })),
@@ -1654,7 +1706,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     await setup(9)
     await click(button('开始导出')!)
     expect('inspection' in exportBodies[0]).toBe(false)
-    const toggle = document.body.querySelector<HTMLElement>('[aria-label="严格核验产物"]')
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="导出后逐项复核成稿"]')
     expect(toggle, '高级选项里缺少严格核验开关').toBeTruthy()
     await click(toggle!)
     await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
@@ -2371,6 +2423,18 @@ describe('P02 · 检查的是哪份产物（对象头不再复述文件名清单
 
 describe('T33 · 检查摘要按导出目标取范围', () => {
   const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
+
+  it('期刊底旧绑定的导出结论用中性名称', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
+    await act(async () => useDocumentStore.getState().commit(literal('期刊底'), (d) => { d.profile = { id: 'journal-base-v1' } }))
+    const before = structuredClone(useDocumentStore.getState().doc.profile)
+    await mountDialogs()
+    await openDialog()
+    const ok = document.body.querySelector('[data-export-check-ok]')
+    expect(ok?.textContent).toContain('期刊检查基础')
+    expect(ok?.textContent).not.toContain('期刊未规定的项一律不判')
+    expect(useDocumentStore.getState().doc.profile).toEqual(before)
+  })
 
   it('按原图：别的图的阻断项与页面级警告都不算进来；按画布：都算', async () => {
     // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 7.5pt：一条 error（别的图）
@@ -3118,7 +3182,7 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
   it('画布上有更新的构建写进来的对象：逐张导出也灰着，并说清原因（Codex #1913）', async () => {
     await setupTwo({ select: [] })
     const doc = useDocumentStore.getState().doc
-    const newer = { id: 'n1', type: 'path', x: 5, y: 5, w: 10, h: 10, subpaths: [] } as never
+    const newer = { id: 'n1', type: 'futureThing', x: 5, y: 5, w: 10, h: 10 } as never
     useDocumentStore.setState({ doc: { ...doc, objects: [...doc.objects, newer] } } as never)
     await click(originalRadio())
     expect(document.body.querySelector('[data-export-batch-names]')).toBeTruthy()
@@ -4411,5 +4475,99 @@ describe('按期刊检查时导出初值跟着期刊走（2026-11-11）', () => 
     expect(formatBox('PNG').checked).toBe(true)
     expect(document.body.querySelector('[data-export-format-journal-unlisted]')).toBeNull()
     expect(document.body.querySelector('[data-export-journal-dpi]')).toBeNull()
+  })
+
+  it('预览台底栏签发印记与交付清单明细：干净完成时在尺寸行右侧亮出中性墨色格式印记（无绿色、零位移），状态槽对齐右栏、详情里带格式标签与体积且不带日志复制钮', async () => {
+    await setup(9)
+    expect(document.body.querySelector('[data-export-signoff]')).toBeNull()
+    await click(button('开始导出')!)
+    const signoff = document.body.querySelector('[data-export-signoff]')
+    expect(signoff).not.toBeNull()
+    expect(signoff!.textContent).toContain('已导出 ·')
+    expect(signoff!.className).not.toContain('text-ok')
+    expect(document.body.querySelector('[data-export-status]')?.className).toContain('md:w-[500px]')
+    await openResultDetail()
+    expect(document.body.querySelector('[data-export-format-tag]')?.textContent).toBe('PDF')
+    expect(document.body.querySelector('[data-export-output-meta]')?.textContent).toContain('80 × 60 mm · 1.2 KB')
+    expect(document.body.querySelector('[data-export-result] [data-notice-copy]')).toBeNull()
+  })
+})
+
+describe('导出左栏「版面预览」（论文真尺寸入版预览）', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+
+  it('默认停在「原图」，切到「版面预览」后按当前规范真实毫米比例排入单栏 / 双栏，重开对话框回到「原图」', async () => {
+    await setup(9, { w: 150, h: 100 })
+    // 默认多图整版（150 × 100 mm）：原图模式
+    expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('figure')
+    expect(q('[data-export-manuscript]')).toBeNull()
+
+    const layoutRadio = q('[data-testid="export-preview-mode"] [data-value="manuscript"]')!
+    await click(layoutRadio)
+    expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('manuscript')
+    const sheet = q('[data-export-manuscript]')!
+    expect(sheet).not.toBeNull()
+    expect(sheet.hasAttribute('data-on-paper')).toBe(true)
+    expect(sheet.getAttribute('data-placement')).toBe('span')
+    expect(q('[data-export-manuscript-figure] [data-canvas-thumb]')).not.toBeNull()
+    expect(q('[data-export-preview-size]')?.textContent).toContain('150 × 100 mm · 默认规范 · 双栏 150 mm')
+
+    // 预览舞台内（纸张与真图）仍严守直角印刷品纪律，不带任何圆角类
+    const stage = q('[data-export-preview-stage]')!
+    for (const el of [stage, ...stage.querySelectorAll<HTMLElement>('*')]) {
+      if (el.closest('[data-export-preview-reset]')) continue
+      if (el.className && typeof el.className === 'string' && !el.closest('.pointer-events-none')) {
+        expect(el.className).not.toMatch(/\brounded/)
+      }
+    }
+
+    // 切到单张 80 × 60 mm 图：保持「版面预览」，默认落右上单栏且可点「换位置」轮换版位，周围无灰块或定位角标，预览上悬浮示例说明胶囊
+    await click(q('[data-export-preview-tab="Fig1.pdf"]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('single')
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('top-right')
+    expect(q('[data-export-manuscript-slot]')).toBeNull()
+    expect(q('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm · 默认规范 · 单栏 80 mm')
+    expect(q('[data-export-manuscript-note]')?.textContent).toContain('版面预览不会被导出')
+
+    await click(q('[data-export-manuscript-cycle]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('mid-left')
+    await click(q('[data-export-manuscript-cycle]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-slot-variant')).toBe('bottom-right')
+
+    // 关闭并重开对话框：回到「原图」默认态，示例说明随之收起
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    expect(q('[data-export-preview-toolbar]')?.getAttribute('data-export-preview-mode')).toBe('figure')
+    expect(q('[data-export-manuscript]')).toBeNull()
+    expect(q('[data-export-manuscript-note]')).toBeNull()
+  })
+
+  it('图幅超出版芯宽度时：标出越界虚线并在底栏如实提示超出版芯；期刊未规定栏宽时不冒充期刊栏宽', async () => {
+    await setup(9, { w: 185, h: 100 })
+    await click(q('[data-testid="export-preview-mode"] [data-value="manuscript"]')!)
+    expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('overflow')
+    expect(q('[data-export-manuscript-overflow]')).not.toBeNull()
+    expect(q('[data-export-preview-size]')?.textContent).toContain('超出「默认规范」版芯（150 mm）')
+
+    // 绑定一份未规定栏宽的期刊（journal-base-v1 空栏位）：底栏显示通用双栏版面，不把兜底 80/150 mm 冠以期刊名
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('绑无栏宽期刊'), (d) => {
+        d.page = { w: 80, h: 60 }
+        d.profile = {
+          id: 'journal-base-v1',
+          follow: false,
+          snapshot: loadProfile('journal-base-v1'),
+          journalRef: {
+            id: 'open-journal',
+            label: 'Journal Without Widths',
+            facts: {},
+          },
+        } as never
+      })
+    })
+    expect(q('[data-export-manuscript]')?.getAttribute('data-placement')).toBe('single')
+    const sizeText = q('[data-export-preview-size]')?.textContent ?? ''
+    expect(sizeText).toContain('双栏版面 · 单栏 80 mm')
+    expect(sizeText).not.toContain('Journal Without Widths')
   })
 })

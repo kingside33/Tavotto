@@ -237,7 +237,7 @@ describe('科学文本解释', () => {
     expect(spans.filter((s) => s.style.fontWeight === '700').map((s) => s.textContent)).toEqual(['K'])
   })
 
-  it('公式（ADR 0152 PR 4）：先按源码显示，排好后换成轮廓；不撑开行盒', async () => {
+  it('公式（ADR 0152 PR 4）：先按源码显示，排好后换成轮廓；撑开所在行（2026-11-16 修订）', async () => {
     const { __resetMathForTests } = await import('@/lib/mathtext')
     __resetMathForTests()
     vi.stubGlobal('fetch', async () =>
@@ -255,8 +255,12 @@ describe('科学文本解释', () => {
       await vi.waitFor(() => expect(el.querySelector('[data-math-state="ok"]')).not.toBeNull())
     })
     const math = el.querySelector<HTMLElement>('[data-math-state="ok"]')!
-    expect(math.style.height).toBe('0px')
-    expect(parseFloat(math.style.width)).toBeCloseTo(2 * mmPxOf(el), 5)
+    // 真高（上伸 + 下伸）坐在基线上：下边缘在基线下 descent（jsdom 量不出字体度量 → 补差为零）
+    const size = mmPxOf(el)
+    expect(parseFloat(math.style.height)).toBeCloseTo(1.0 * size, 5)
+    expect(parseFloat(math.style.verticalAlign)).toBeCloseTo(-0.2 * size, 5)
+    expect(math.querySelector('svg')!.style.top).toBe('0px')
+    expect(parseFloat(math.style.width)).toBeCloseTo(2 * size, 5)
     expect(math.querySelector('path')?.getAttribute('d')).toBe('M 0 0 L 2 0 Z')
   })
 
@@ -351,5 +355,23 @@ describe('TextView 纸上的文字选区按实际的底取', () => {
 
   it('页面设了深色但标成透明：画的是浅棋盘格，按纸算', () => {
     expect(selection({}, { bg: '#000000', transparent: true })).toEqual(LIGHT)
+  })
+})
+
+describe('导入的文字不会被当成 HTML（ADR 0189 安全边界）', () => {
+  it.each([
+    '<img src=x onerror="alert(1)">',
+    '<script>alert(1)</script>',
+    '<svg onload=alert(1)>',
+    '<a href="javascript:alert(1)">x</a>',
+  ])('%s 原样当文字显示，不长出元素', (payload) => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj({ text: payload, name: payload }))
+    })
+    act(() => {
+      root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
+    })
+    expect(container.querySelector('img, script, a, svg[onload]')).toBeNull()
+    expect(container.textContent).toContain(payload.replace(/^\s+/, '').slice(0, 4))
   })
 })

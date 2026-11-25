@@ -214,6 +214,8 @@ interface NumberFieldProps {
    * 在空框里按 Backspace / Delete 也算。不给时空框照旧还原（属性页：数不能「没有」）
    */
   onClear?: () => void
+  /** ⇧ 时步长乘几（方向键与拖标签同一个）；缺省 10 */
+  shiftMult?: number
   className?: string
   title?: string
   /** 无障碍名。缺省时从字符串 prefix/unit 推导（"X (mm)"）；prefix 不是
@@ -250,6 +252,7 @@ export function NumberField({
   mixed,
   mixedPlaceholder,
   onClear,
+  shiftMult = 10,
   className,
   title,
   ariaLabel,
@@ -336,7 +339,7 @@ export function NumberField({
       if (Math.abs(dx) < 2 && !moved) return
       if (!moved) onScrubStart?.()
       moved = true
-      const mult = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1
+      const mult = ev.shiftKey ? shiftMult : ev.altKey ? 0.1 : 1
       onChange(clampVal(startVal + dx * step * mult))
     }
     const finish = (cancelled: boolean) => {
@@ -459,29 +462,27 @@ export function NumberField({
             } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               e.preventDefault()
               // 修饰键与拖动改数同一张表：Shift ×10、Alt ×0.1（2026-09-14 审计 S13：此前键盘缺 Alt）
-              const mult = e.shiftKey ? 10 : e.altKey ? 0.1 : 1
+              const mult = e.shiftKey ? shiftMult : e.altKey ? 0.1 : 1
               const next = commit(value + (e.key === 'ArrowUp' ? step : -step) * mult)
               setText(String(Number(next.toFixed(precision))))
             }
           }}
           className={cn(
-            // 框里只剩它一个（标签、单位都在框外）。宽度 = 等宽字体 4 个字符
-            // （12 / 1000 / 12.5 这类常见值刚好放下）+ 左右内边距 0.75rem——Tailwind 的
-            // 盒模型是 border-box，只写 4ch 的话内边距会吃掉两个字符，「100」就只剩「10」
-            // （2026-09-11 真项目里量到）。框只比数字大一圈，不再按文本框默认的 20 字符
-            // 固有宽度（≈170px）撑开；数字居中。调用方要更宽时覆盖 input 的宽度即可。
             'type-number h-full min-w-0 bg-transparent text-ink outline-none',
-            prefix != null && prefixInside ? 'pl-1 pr-1.5' : 'px-1.5',
+            prefix != null && prefixInside ? 'pl-1 pr-1.5' : fill || half ? 'pl-2 pr-1' : 'px-1.5',
             fill || half ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
-            // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
-            unit != null ? 'pr-0.5 text-right' : 'text-center',
+            // 栏内定宽框（fill / half 且无框内前缀）左对齐，与同列文字框 / 下拉 / 色号严格共线；紧凑 4ch 小框保留右对齐或居中
+            (fill || half) && !(prefix != null && prefixInside)
+              ? 'text-left'
+              : unit != null
+                ? 'pr-0.5 text-right'
+                : 'text-center',
           )}
         />
         {unit != null && (
-          /* 单位列至少 2 个字符宽：pt / mm / px / ° / % 的框在同一列里才一样宽、右缘对齐
-             （二审 A5：此前 `0 °` 的框比 `3.5 pt` 的窄 5px）；ppi 三个字符自然更宽 */
-          <span className="type-number min-w-[2ch] shrink-0 select-none whitespace-nowrap pr-1.5 text-ink-3">
+          /* 单位列至少 2 个字符宽：pt / mm / px / ° / % 的框在同一列里才一样宽、右缘对齐 */
+          <span className="type-number min-w-[2ch] shrink-0 select-none whitespace-nowrap pr-2 text-right text-ink-3">
             {unit}
           </span>
         )}
@@ -599,7 +600,7 @@ export function ColorField({
         className={cn(
           // 只剩色块时取色盘是**透明盖在色块上的真控件**；带面板时盖着的是面板触发钮。
           // 两种都在这一层画焦点环（overflow-hidden 只裁子元素，不吃这一层自己的 outline）
-          'relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors has-[:focus-visible]:focus-ring',
+          'relative h-7 w-7 shrink-0 overflow-hidden rounded-sm border border-border transition-colors has-[:focus-visible]:focus-ring',
           // 坐在胶囊（浮动工具条，祖先带 data-capsule）里是一枚与控件同高的圆：胶囊左端是半圆，28 的圆在 p-1 里与它同心
           // （2026-10-13 用户：「左侧的颜色可以改成圆形了」；输入框同一条规则在 fieldBox）
           'in-data-capsule:size-7 in-data-capsule:rounded-full',
@@ -644,6 +645,8 @@ export function ColorField({
             <ColorPanel
               value={mixed ? null : value}
               documentColors={host?.documentColors ?? []}
+              figureColors={host?.figureColors ?? []}
+              recommended={host?.recommended ?? null}
               onPick={(c) => {
                 pick(c)
                 setOpen(false)
@@ -756,18 +759,22 @@ function HexInput({
 }
 
 /**
- * 取色面板：文档颜色 / 最近 / 系统取色器。
+ * 取色面板：排版里的颜色 / 最近 / 图内配色 / 推荐配色（色盲友好，ADR 0185 M3）/ 系统取色器。
  * 「无」与不透明度不在这里：能取「无」的属性各有自己的开关（形状填充、文字底色的 EffectToggle），
  * 不透明度各有自己的一行——同一个属性不出第二个控件。
  */
 function ColorPanel({
   value,
   documentColors,
+  figureColors,
+  recommended,
   onPick,
   onSystem,
 }: {
   value: string | null
   documentColors: readonly string[]
+  figureColors: readonly string[]
+  recommended: { colors: readonly string[]; journal: string | null } | null
   onPick: (c: string) => void
   onSystem: () => void
 }) {
@@ -799,10 +806,12 @@ function ColorPanel({
       </button>
     )
   }
-  const group = (title: string, colors: readonly string[], attr: string) =>
+  const group = (title: string, colors: readonly string[], attr: string, tip?: string) =>
     colors.length > 0 && (
       <div data-color-group={attr} className="flex flex-col gap-1">
-        <p className="type-meta">{title}</p>
+        <p className="type-meta" title={tip}>
+          {title}
+        </p>
         <div className="flex flex-wrap gap-1">{colors.map((c) => chip(c, `${attr}-${c}`))}</div>
       </div>
     )
@@ -810,6 +819,16 @@ function ColorPanel({
     <div className="flex flex-col gap-2" data-color-panel>
       {group(t('colorField.documentColors'), documentColors.slice(0, 16), 'document')}
       {group(t('colorField.recent'), recentColors, 'recent')}
+      {group(t('colorField.figureColors'), figureColors, 'figure')}
+      {recommended &&
+        group(
+          t('colorField.recommended'),
+          recommended.colors,
+          'recommended',
+          recommended.journal
+            ? t('colorField.recommendedTipJournal', { journal: recommended.journal })
+            : t('colorField.recommendedTip'),
+        )}
       <button
         type="button"
         data-color-system

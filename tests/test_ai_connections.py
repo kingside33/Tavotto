@@ -587,9 +587,9 @@ def test_post_custom_vendor_needs_base_url_and_wire(client, world):
         {"vendor": "claude", "api_key": KEY},
         {"vendor": "minimax-oauth", "api_key": KEY},
         {"vendor": "custom", "api_key": KEY},
-        {"vendor": "custom", "api_key": KEY, "base_url": "https://x.example.org"},
         {"vendor": "custom", "api_key": KEY, "wire": "anthropic"},
         {"vendor": "custom", "api_key": KEY, "base_url": "https://x.example.org", "wire": "chat"},
+        {"vendor": "custom", "api_key": KEY, "base_url": "https://x.example.org", "wire": 3},
         {"vendor": "deepseek", "api_key": KEY, "base_url": "http://evil.example.org"},
         {"vendor": "deepseek", "api_key": KEY, "base_url": "ftp://x"},
         {"vendor": "deepseek", "api_key": KEY, "base_url": 7},
@@ -824,6 +824,7 @@ def test_fix_connection_takes_the_first_ready_key_connection(world, monkeypatch)
         "api_key": KEY2,
         "model": "kimi-k3",
         "auth": "key",
+        "provider_id": "good",  # 运行结束后按它把换协议 / 长度字段回报落回这条记录
     }
     # 什么都没「选中」也算连着；老用户选中的那条仍排在最前
     _save("second", base="https://api.deepseek.com/anthropic", key=KEY)
@@ -1879,7 +1880,7 @@ def test_login_and_oauth_methods_are_never_key_connections(client, world, body):
 
 
 def test_official_key_connections_carry_efforts_on_the_builtin_route(client, world):
-    world["fetch"] = (["claude-opus-5-5", "gpt-5"], None)
+    world["fetch"] = (["claude-opus-5-5", "gpt-6.2-sol"], None)
     world["cli"] = False
     # 型号清单缓存按（地址、密钥指纹）落在数据目录里、跨用例共用：这里用独有的密钥，免得读到别的用例缓存的清单
     a = _post(client, vendor="anthropic-api", api_key="sk-conn-EFFORT-a1").get_json()["connection"]

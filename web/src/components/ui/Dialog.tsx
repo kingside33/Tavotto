@@ -139,6 +139,11 @@ interface DialogProps {
    * 不给（或给 null / false）就不占位。
    */
   status?: ReactNode
+  /**
+   * 贴着外框画的一层（`ui/EdgeProgress` 进度描边）：铺满外壳、不占位、不接事件——给「进度不许撑高卡片」
+   * 的场合用（外部审阅分享，ADR 0187 §八）。不给就没有这一层。
+   */
+  edge?: ReactNode
   size?: DialogSize
   /**
    * 特殊场合才用；常规尺寸走 size。只给 `shell` 那种自己管布局的大窗口（版本预览按窗口比例：
@@ -222,6 +227,7 @@ export function Dialog({
   children,
   footer,
   status,
+  edge,
   size = 'md',
   width,
   height,
@@ -342,7 +348,11 @@ export function Dialog({
       data-floating={floating || undefined}
       data-scrolled={(floating && scrolled) || undefined}
       // 底色在 index.css 的 [data-dialog-footer] 规则里（白底 ↔ 毛玻璃两态，含 reduced-transparency）
-      className={cn('flex shrink-0 items-center gap-2 px-5 pb-4 pt-3', floating && 'relative z-sticky')}
+      className={cn(
+        'flex shrink-0 items-center gap-2 px-5 pb-4',
+        hasStatus ? 'pt-2' : 'pt-3',
+        floating && 'relative z-sticky',
+      )}
       style={floating && footerH ? { marginTop: -footerH } : undefined}
     >
       {slots ? (
@@ -493,12 +503,13 @@ export function Dialog({
           {hasStatus && (
             <div
               data-dialog-status
-              className="max-h-[30vh] shrink-0 overflow-y-auto border-t border-border px-5 pb-2 pt-3"
+              className="max-h-[28vh] shrink-0 overflow-y-auto px-5 pb-1 pt-1.5"
             >
               {status}
             </div>
           )}
           {hasFooter && footerEl}
+          {edge}
           {!locked && !palette && (
             <RD.Close asChild>
               {/* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
